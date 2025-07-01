@@ -39,7 +39,7 @@ Ferramenta com interface gráfica para administração remota de sistemas Cobol 
 
 ## Como usar
 
-1. Execute o arquivo `Cobol_Python_v10_Final.py` com Python 3.
+1. Execute o arquivo `Cobol_Python_***_Final.py` com Python 3.
 2. Preencha os campos de conexão e clique em "Conectar".
 3. Navegue pelas abas para acessar as funcionalidades.
 4. Use o botão "Administrador" para configurar filtros, senhas e autenticação Google.
