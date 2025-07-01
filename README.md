@@ -57,4 +57,4 @@ Ferramenta com interface gráfica para administração remota de sistemas Cobol 
 
 ---
 
-Para detalhes completos das funcionalidades, consulte o código-fonte em [Cobol_Python_v10_Final.py](Cobol_Python_v10_Final.py).
+Para detalhes completos das funcionalidades, consulte o código-fonte em [Cobol_Python_***_Final.py](Cobol_Python_***_Final.py).
