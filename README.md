@@ -4,6 +4,16 @@ Ferramenta com interface gráfica para administração remota de sistemas Cobol 
 
 ## Histórico de Versões
 
+- **1.2.4**  
+  - Correções de problemas de criptografia e segurança de senhas administrativas  
+  - Melhoria na verificação e armazenamento de host keys SSH  
+  - Interface aprimorada: novas cores, botões e experiência visual  
+  - Filtros permanentes e voláteis mais flexíveis para usuários e comandos  
+  - Atualização automática aprimorada e configuração de URL via interface  
+  - Ajustes em consultas por tela, matrícula e derrubada de processos  
+  - Ajuda integrada expandida  
+  - Diversas correções de bugs e melhorias de estabilidade
+
 - **1.2.0**  
   - Integração com login Google OAuth para autenticação de administradores  
   - Melhorias de segurança e validação de domínio autorizado  
@@ -26,29 +36,33 @@ Ferramenta com interface gráfica para administração remota de sistemas Cobol 
 ## Funcionalidades
 
 - **Conexão SSH**: Conecte-se a servidores informando host, usuário, senha e porta.
-- **Listagem de Processos**: Visualize e filtre processos ativos, com bloqueio automático de usuários críticos.
-- **Derrubar Processos**: Selecione e derrube PIDs manualmente ou pela tabela.
+- **Listagem de Processos**: Visualize e filtre processos ativos, com bloqueio automático de usuários críticos e comandos sensíveis.
+- **Derrubar Processos**: Selecione e derrube PIDs manualmente ou pela tabela, com confirmação interativa.
 - **Consulta por Matrícula/Romaneio**: Busque processos relacionados a matrículas ou romaneios em `/d/work`.
-- **Consulta por Tela**: Busque processos por número de tela ou romaneio em `/d/dados`.
-- **Terminal Interativo**: Execute comandos em tempo real no servidor, com saída contínua.
+- **Consulta por Tela**: Busque processos por número de tela em `/d/dados`, com suporte a filtros e seleção múltipla.
+- **Terminal Interativo**: Execute comandos em tempo real no servidor, com saída contínua e sessão interativa.
 - **Execução de Comandos em Lote**: Execute múltiplos comandos de uma vez, com resultados exibidos em painel dedicado.
-- **Administração**: Configure filtros permanentes de usuários/comandos e altere senhas administrativas.
-- **Login Google OAuth**: Autenticação de administradores via conta Google e domínio autorizado.
-- **Atualizações Automáticas**: Verifique e baixe novas versões diretamente pelo sistema.
-- **Ajuda Integrada**: Manual de uso acessível pelo botão "Ajuda".
+- **Administração**: Configure filtros permanentes de usuários/comandos e altere senhas administrativas e master via interface.
+- **Atualizações Automáticas**: Verifique e baixe novas versões diretamente pelo sistema, com configuração de URL.
+- **Ajuda Integrada**: Manual de uso acessível pelo botão "Ajuda", com instruções detalhadas.
+- **Histórico de Hosts**: Hosts conectados são salvos e sugeridos automaticamente.
+- **Segurança Avançada**: Senhas administrativas criptografadas, verificação de host key interativa, e proteção contra comandos perigosos.
+- **Interface Moderna**: Visual renovado, botões coloridos, atalhos de teclado (Ctrl+A, Enter), e feedback visual aprimorado.
+- **Compatibilidade Windows**: Ocultação automática do console ao rodar como executável.
 
 ## Como usar
 
-1. Execute o arquivo `Cobol_Python_***_Final.py` com Python 3.
+1. Execute o arquivo `Cobol_Python_v1.2.4_Final.py` com Python 3.
 2. Preencha os campos de conexão e clique em "Conectar".
 3. Navegue pelas abas para acessar as funcionalidades.
-4. Use o botão "Administrador" para configurar filtros, senhas e autenticação Google.
+4. Use o botão "Administrador" para configurar filtros, senhas e URL de atualização.
 5. Clique em "Verificar Atualizações" para buscar novas versões.
+6. Consulte o botão "Ajuda" para instruções detalhadas de uso.
 
 ## Requisitos
 
 - Python 3.x
-- Bibliotecas: `paramiko`, `tkinter`, `Pillow`, `google-auth-oauthlib`, etc.
+- Bibliotecas: `paramiko`, `tkinter`, `Pillow`, `cryptography`, etc.
 
 ## Contato
 
@@ -57,4 +71,4 @@ Ferramenta com interface gráfica para administração remota de sistemas Cobol 
 
 ---
 
-Para detalhes completos das funcionalidades, consulte o código-fonte em [Cobol_Python_***_Final.py](Cobol_Python_***_Final.py).
+Para detalhes completos das funcionalidades, consulte o código-fonte em [Cobol_Python_v1.2.4_Final.py](Cobol_Python_v1.2.4_Final.py)
