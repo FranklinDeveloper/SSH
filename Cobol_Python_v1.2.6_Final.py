@@ -185,7 +185,7 @@ class SSHClientGUI:
         self.admin_config_file = os.path.join(os.path.expanduser("~"), ".ssh_tool_config")
         
         # CORREÇÃO: DEFINIR CONSTANTES PRIMEIRO
-        self.DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/seu-usuario/seu-repositorio/main/version.json"
+        self.DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/FranklinDeveloper/SSH/main/version.json"
         
         # Agora carregar a configuração
         self.admin_config = self.load_admin_config()
