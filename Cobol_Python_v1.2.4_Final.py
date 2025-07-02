@@ -28,7 +28,7 @@ from cryptography.exceptions import InvalidSignature, InvalidTag
 IS_EXE = getattr(sys, 'frozen', False)
 
 # Versão do software - importante para atualizações
-SOFTWARE_VERSION = "1.2.4"  # Corrigidos problemas de criptografia
+SOFTWARE_VERSION = "1.2.4"  # Corrigidos problemas de criptografia e filtros permanentes
 
 # Oculta o console ao iniciar o .exe (Windows apenas)
 if sys.platform.startswith('win') and IS_EXE:
@@ -39,6 +39,10 @@ if sys.platform.startswith('win') and IS_EXE:
 # Configuração básica de logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('ssh_tool')
+
+# Filtros permanentes fixos (não dependem de arquivo de configuração)
+PERMANENT_FILTER_USERS = ['root', 'zabbix', 'sshd', 'postfix', 'nscd', 'message+', 'usertra+']
+PERMANENT_FILTER_COMMANDS = []
 
 class InteractiveHostKeyPolicy(paramiko.MissingHostKeyPolicy):
     """Política interativa para verificação de host keys com opção de lembrar permanentemente"""
@@ -170,16 +174,14 @@ class SSHClientGUI:
         
         # CORREÇÃO: DEFINIR CONSTANTES PRIMEIRO
         self.DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/seu-usuario/seu-repositorio/main/version.json"
-        # Use environment variable for master password, fallback to a safe default if not set
-        self.DEFAULT_MASTER_PASSWORD = os.environ.get("SSH_TOOL_MASTER_PASSWORD", "admin")  # Alterado para 'admin'
         
         # Agora carregar a configuração
         self.admin_config = self.load_admin_config()
         
-        # Filtro permanente (interno, não visível) - CARREGADO DO ARQUIVO DE CONFIGURAÇÃO
+        # Filtro permanente (interno, não visível) - USANDO VALORES FIXOS DO CÓDIGO
         self.permanent_filter = {
-            'users': self.admin_config.get('permanent_filter_users', ['root', 'zabbix', 'sshd', 'postfix', 'nscd', 'message+', 'usertra+']),
-            'commands': self.admin_config.get('permanent_filter_commands', [])
+            'users': PERMANENT_FILTER_USERS,
+            'commands': PERMANENT_FILTER_COMMANDS
         }
         
         # Configurar estilo visual moderno
@@ -646,7 +648,7 @@ class SSHClientGUI:
         
         # Frame de comando com organização melhorada
         cmd_frame = ttk.Frame(terminal_frame)
-        cmd_frame.pack(fill=tk.X, pady=(0,2))
+        cmd_frame.pack(fill=tk.X, padx=5, pady=(0,2))
         
         ttk.Label(cmd_frame, text="Comando:").pack(side=tk.LEFT, padx=(0,5))
         
@@ -863,35 +865,29 @@ class SSHClientGUI:
     def load_admin_config(self):
         """Carrega a configuração do administrador do arquivo"""
         # Hash da senha master fixa
-        MASTER_PASSWORD = "Carro@#356074"  # Isso será usado apenas na primeira execução
+        MASTER_PASSWORD = "Carro@#356074"  # Isso será usado apenas para gerar o hash
         master_password_hash = hashlib.sha256(MASTER_PASSWORD.encode()).hexdigest()
         
         default_config = {
             'admin_password': self.encrypt_data('admin'),
             'master_password_hash': master_password_hash,
-            'update_url': self.DEFAULT_UPDATE_URL,
-            'permanent_filter_users': ['root', 'zabbix', 'sshd', 'postfix', 'nscd', 'message+', 'usertra+'],
-            'permanent_filter_commands': []
+            'update_url': self.DEFAULT_UPDATE_URL
         }
         
         config_path = self.admin_config_file
         
-        # Se o arquivo não existe, criar com valores padrão
+        # Se o arquivo não existe, retornar os valores padrão
         if not os.path.exists(config_path):
-            os.makedirs(os.path.dirname(config_path), exist_ok=True)
-            with open(config_path, 'w') as f:
-                json.dump(default_config, f)
             return default_config
         
         try:
             with open(config_path, 'r') as f:
                 config = json.load(f)
             
-            # Se o arquivo não tem o hash, adicionar
-            if 'master_password_hash' not in config:
-                config['master_password_hash'] = master_password_hash
-                with open(config_path, 'w') as f:
-                    json.dump(config, f)
+            # Preencher com valores padrão se alguma chave estiver faltando
+            for key, value in default_config.items():
+                if key not in config:
+                    config[key] = value
             
             return config
         except Exception as e:
@@ -1138,6 +1134,11 @@ class SSHClientGUI:
             self.permanent_filter['users'] = [u.strip() for u in users if u.strip()]
             self.permanent_filter['commands'] = [c.strip() for c in commands if c.strip()]
             
+            # Atualizar lista global de filtros permanentes
+            global PERMANENT_FILTER_USERS, PERMANENT_FILTER_COMMANDS
+            PERMANENT_FILTER_USERS = self.permanent_filter['users']
+            PERMANENT_FILTER_COMMANDS = self.permanent_filter['commands']
+            
             # Atualizar configuração para salvar
             self.admin_config['permanent_filter_users'] = self.permanent_filter['users']
             self.admin_config['permanent_filter_commands'] = self.permanent_filter['commands']
@@ -1215,6 +1216,15 @@ class SSHClientGUI:
         save_btn = ttk.Button(master_btn_frame, text="Salvar Configuração", command=save_master_config, style='Green.TButton')
         save_btn.pack(side=tk.LEFT, padx=5)
         
+        # NOVO BOTÃO: Gerar Executável
+        generate_exe_btn = ttk.Button(
+            master_btn_frame, 
+            text="Gerar Executável",
+            command=self.generate_executable,
+            style='Green.TButton'
+        )
+        generate_exe_btn.pack(side=tk.LEFT, padx=5)
+        
         cancel_btn = ttk.Button(master_btn_frame, text="Cancelar", command=top.destroy)
         cancel_btn.pack(side=tk.LEFT)
         
@@ -1238,6 +1248,127 @@ class SSHClientGUI:
         
         # Rastrear mudanças na variável
         admin_type_var.trace_add("write", lambda *args: update_auth_ui())
+
+    def generate_executable(self):
+        """Gera um executável do aplicativo usando PyInstaller com barra de progresso"""
+        # Criar janela de progresso
+        self.progress_window = tk.Toplevel(self.root)
+        self.progress_window.title("Gerando Executável")
+        self.progress_window.geometry("400x150")
+        self.progress_window.resizable(False, False)
+        self.progress_window.transient(self.root)
+        self.progress_window.grab_set()
+        self.progress_window.protocol("WM_DELETE_WINDOW", lambda: None)  # Desabilitar fechar
+
+        frame = ttk.Frame(self.progress_window, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        self.progress_label = ttk.Label(frame, text="Preparando para gerar executável...")
+        self.progress_label.pack(pady=5)
+
+        self.progress_bar = ttk.Progressbar(frame, mode='indeterminate')
+        self.progress_bar.pack(fill=tk.X, pady=10)
+        self.progress_bar.start(10)
+
+        # Iniciar a thread de geração
+        threading.Thread(target=self._generate_executable_thread, daemon=True).start()
+
+    def _generate_executable_thread(self):
+        """Executa a geração do executável em segundo plano"""
+        try:
+            # Atualizar label
+            self.root.after(0, lambda: self.progress_label.config(text="Criando script temporário..."))
+            
+            # Criar script temporário com os filtros atualizados
+            temp_script_path = self.create_temp_script_with_filters()
+            
+            # Verificar se PyInstaller está instalado, caso contrário instalar
+            try:
+                import PyInstaller
+            except ImportError:
+                # Atualizar label
+                self.root.after(0, lambda: self.progress_label.config(text="Instalando PyInstaller..."))
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
+            
+            # Comando para gerar o executável
+            cmd = [
+                sys.executable,
+                "-m",
+                "PyInstaller",
+                "--onefile",
+                "--windowed",
+                "--name=GerenciadorSSH",
+                "--add-data=logoicogrupoprofarma.png;." if os.path.exists("logoicogrupoprofarma.png") else "",
+                temp_script_path
+            ]
+            
+            # Filtrar argumentos vazios
+            cmd = [arg for arg in cmd if arg]
+            
+            # Atualizar label
+            self.root.after(0, lambda: self.progress_label.config(text="Gerando executável (pode demorar)..."))
+            
+            # Executar o comando
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            # Monitorar progresso
+            progress = 0
+            while True:
+                if process.poll() is not None:
+                    break
+                progress = (progress + 5) % 100
+                self.root.after(0, lambda: self.progress_label.config(
+                    text=f"Gerando executável... {progress}%"
+                ))
+                time.sleep(0.5)
+            
+            stdout, stderr = process.communicate()
+            
+            # Excluir o script temporário
+            try:
+                os.unlink(temp_script_path)
+            except Exception:
+                pass
+            
+            if process.returncode == 0:
+                self.root.after(0, messagebox.showinfo, "Sucesso", "Executável gerado com sucesso na pasta 'dist'!")
+            else:
+                error_msg = f"Erro ao gerar executável:\n\n{stderr.decode(errors='ignore')}"
+                self.root.after(0, messagebox.showerror, "Erro", error_msg)
+            
+        except Exception as e:
+            self.root.after(0, messagebox.showerror, "Erro", f"Falha ao gerar executável: {str(e)}")
+        finally:
+            # Fechar a janela de progresso
+            self.root.after(0, self.progress_window.destroy)
+
+    def create_temp_script_with_filters(self):
+        """Cria um script temporário com os filtros permanentes atualizados"""
+        # Ler o conteúdo do script atual
+        current_script = os.path.abspath(__file__)
+        with open(current_script, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        # Encontrar as linhas que definem as listas de filtros
+        new_lines = []
+        for line in lines:
+            stripped_line = line.strip()
+            if stripped_line.startswith('PERMANENT_FILTER_USERS ='):
+                # Substituir pela lista atual da configuração
+                users = self.admin_config.get('permanent_filter_users', PERMANENT_FILTER_USERS)
+                new_line = f"PERMANENT_FILTER_USERS = {users}\n"
+                new_lines.append(new_line)
+            elif stripped_line.startswith('PERMANENT_FILTER_COMMANDS ='):
+                commands = self.admin_config.get('permanent_filter_commands', PERMANENT_FILTER_COMMANDS)
+                new_line = f"PERMANENT_FILTER_COMMANDS = {commands}\n"
+                new_lines.append(new_line)
+            else:
+                new_lines.append(line)
+        
+        # Escrever o script temporário
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.py', delete=False) as temp_script:
+            temp_script.writelines(new_lines)
+            return temp_script.name
 
     def check_for_updates(self):
         """Verifica se há atualizações disponíveis para o software"""
@@ -2332,26 +2463,6 @@ timeout /t 3 /nobreak >nul
         ).start()
 
 if __name__ == "__main__":
-    # Criar arquivo .gitignore se não existir
-    gitignore_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".gitignore")
-    if not os.path.exists(gitignore_path):
-        with open(gitignore_path, 'w') as f:
-            f.write("""# Arquivos de configuração locais
-*.json
-!config.json
-
-# Arquivos temporários
-*.tmp
-*.log
-
-# Arquivos de ambiente
-.env
-
-# Diretórios
-.venv/
-__pycache__/
-""")
-    
     # Forçar regeneração do arquivo de configuração se solicitado
     config_path = os.path.join(os.path.expanduser("~"), ".ssh_tool_config")
     if '--reset-config' in sys.argv and os.path.exists(config_path):
