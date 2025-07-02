@@ -185,7 +185,7 @@ class SSHClientGUI:
         self.admin_config_file = os.path.join(os.path.expanduser("~"), ".ssh_tool_config")
         
         # CORREÇÃO: DEFINIR CONSTANTES PRIMEIRO
-        self.DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/FranklinDeveloper/SSH/main/version.json"
+        self.DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/seu-usuario/seu-repositorio/main/version.json"
         
         # Agora carregar a configuração
         self.admin_config = self.load_admin_config()
@@ -1369,7 +1369,12 @@ class SSHClientGUI:
             
             # Passo 4: Executar PyInstaller (40%-90%)
             self.update_progress(50, "Compilando aplicativo (pode demorar alguns minutos)...")
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            process = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW  # Evita janelas pop-up
+            )
             
             # Simular progresso durante a compilação
             progress = 50
@@ -1436,8 +1441,11 @@ class SSHClientGUI:
             # Obter URL de atualização da configuração
             update_url = self.admin_config.get('update_url', self.DEFAULT_UPDATE_URL)
             
-            # Baixar informações de versão
-            with urllib.request.urlopen(update_url, timeout=10) as response:
+            # Adicionar headers para evitar erro 403
+            headers = {"User-Agent": "SSHManager/1.0"}
+            req = urllib.request.Request(update_url, headers=headers)
+            
+            with urllib.request.urlopen(req, timeout=10) as response:
                 data = json.loads(response.read().decode())
                 latest_version = data.get('version')
                 
@@ -2531,12 +2539,205 @@ timeout /t 3 /nobreak >nul
             daemon=True
         ).start()
 
+# =================================================================
+# SCRIPT DE RELEASE PARA AUTOMATIZAR ATUALIZAÇÕES
+# =================================================================
+def release_main():
+    """Função principal para o script de release"""
+    import argparse
+    import json
+    import re
+    import tempfile
+    import subprocess
+    from datetime import datetime
+    
+    # Configurações
+    REPO_NAME = "seu-repositorio"
+    GITHUB_USER = "seu-usuario"
+    VERSION_FILE = "version.json"
+    MAIN_SCRIPT = "ssh_tool.py"  # Este arquivo
+    EXE_NAME = "GerenciadorSSH.exe"
+    PYINSTALLER_CMD = [
+        "pyinstaller",
+        "--onefile",
+        "--windowed",
+        f"--name={EXE_NAME}",
+        "--icon=logoicogrupoprofarma.ico",
+        MAIN_SCRIPT
+    ]
+
+    def get_current_version():
+        """Obtém a versão atual do arquivo principal"""
+        version_pattern = re.compile(r'SOFTWARE_VERSION\s*=\s*"(\d+\.\d+\.\d+)"')
+        
+        with open(MAIN_SCRIPT, 'r', encoding='utf-8') as f:
+            for line in f:
+                match = version_pattern.search(line)
+                if match:
+                    return match.group(1)
+        return "0.0.0"
+
+    def validate_version_format(version):
+        """Valida o formato da versão"""
+        if not re.match(r'^\d+\.\d+\.\d+$', version):
+            raise ValueError("Formato de versão inválido. Use MAJOR.MINOR.PATCH")
+        return version
+
+    def update_version_file(new_version, build_exe=True):
+        """Atualiza o arquivo version.json com a nova versão"""
+        # Construir URLs para a nova versão
+        base_url = f"https://github.com/{GITHUB_USER}/{REPO_NAME}/releases/download/v{new_version}/"
+        
+        version_data = {
+            "version": new_version,
+            "release_date": datetime.now().strftime("%Y-%m-%d"),
+            "exe_url": base_url + EXE_NAME,
+            "py_url": base_url + MAIN_SCRIPT,
+            "notes": ""
+        }
+        
+        # Salvar arquivo version.json
+        with open(VERSION_FILE, 'w') as f:
+            json.dump(version_data, f, indent=4)
+        
+        print(f"✅ version.json atualizado para v{new_version}")
+        
+        # Adicionar ao controle de versão
+        subprocess.run(["git", "add", VERSION_FILE], check=True)
+        subprocess.run(["git", "commit", "-m", f"Atualiza version.json para v{new_version}"], check=True)
+        
+        if build_exe:
+            build_executable()
+
+    def build_executable():
+        """Compila o executável usando PyInstaller"""
+        print("\n🔨 Compilando executável...")
+        try:
+            # Construir comando PyInstaller
+            cmd = PYINSTALLER_CMD
+            
+            # Executar compilação
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            
+            if "completed successfully" in result.stdout:
+                print("✅ Executável compilado com sucesso!")
+                return True
+            else:
+                print("❌ Erro na compilação:")
+                print(result.stderr)
+                return False
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Falha na compilação: {e.stderr}")
+            return False
+
+    def create_github_release(new_version):
+        """Cria uma nova release no GitHub"""
+        print("\n🚀 Criando release no GitHub...")
+        
+        # Tag da versão
+        tag_name = f"v{new_version}"
+        
+        # Mensagem da release
+        release_notes = input("✏️ Digite as notas da release: ")
+        
+        # Construir comando
+        cmd = [
+            "gh", "release", "create",
+            tag_name,
+            f"--title=v{new_version}",
+            f"--notes={release_notes}",
+            f"dist/{EXE_NAME}",
+            MAIN_SCRIPT,
+            VERSION_FILE
+        ]
+        
+        try:
+            subprocess.run(cmd, check=True)
+            print(f"✅ Release {tag_name} criada com sucesso!")
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Falha ao criar release: {e}")
+            return False
+        return True
+
+    def update_version_in_code(new_version):
+        """Atualiza a versão no código-fonte principal"""
+        try:
+            # Criar arquivo temporário
+            with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp_file:
+                with open(MAIN_SCRIPT, 'r') as original:
+                    for line in original:
+                        if line.strip().startswith('SOFTWARE_VERSION'):
+                            tmp_file.write(f'SOFTWARE_VERSION = "{new_version}"\n')
+                        else:
+                            tmp_file.write(line)
+                
+                temp_name = tmp_file.name
+            
+            # Substituir arquivo original
+            os.replace(temp_name, MAIN_SCRIPT)
+            
+            print(f"✅ Versão no código atualizada para v{new_version}")
+            return True
+        except Exception as e:
+            print(f"❌ Falha ao atualizar código: {str(e)}")
+            return False
+
+    # Configurar parser de argumentos
+    parser = argparse.ArgumentParser(
+        description='Automatiza releases do Gerenciador SSH',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument('version', nargs='?', help='Nova versão no formato MAJOR.MINOR.PATCH')
+    parser.add_argument('--only-version', action='store_true', help='Apenas atualiza a versão no código')
+    parser.add_argument('--skip-build', action='store_true', help='Pula a compilação do executável')
+    
+    args = parser.parse_args()
+    
+    try:
+        # Obter/validar versão
+        if args.version:
+            new_version = validate_version_format(args.version)
+        else:
+            current = get_current_version()
+            parts = [int(x) for x in current.split('.')]
+            parts[-1] += 1  # Incrementa o PATCH
+            new_version = ".".join(str(x) for x in parts)
+            print(f"⚠️  Versão não especificada. Usando versão incrementada: v{new_version}")
+        
+        # Atualizar versão no código
+        if not update_version_in_code(new_version):
+            return
+        
+        if args.only_version:
+            print("✨ Apenas versão no código atualizada")
+            return
+        
+        # Atualizar version.json
+        update_version_file(new_version, not args.skip_build)
+        
+        # Criar release no GitHub
+        if not args.skip_build:
+            create_github_release(new_version)
+        
+        print("\n🎉 Release completa realizada com sucesso!")
+    
+    except Exception as e:
+        print(f"\n❌ ERRO: {str(e)}")
+        sys.exit(1)
+
 if __name__ == "__main__":
     # Forçar regeneração do arquivo de configuração se solicitado
     config_path = os.path.join(os.path.expanduser("~"), ".ssh_tool_config")
     if '--reset-config' in sys.argv and os.path.exists(config_path):
         os.unlink(config_path)
     
-    root = tk.Tk()
-    app = SSHClientGUI(root)
-    root.mainloop()
+    # Se o argumento --release for passado, executar o script de release
+    if '--release' in sys.argv:
+        # Remover o --release para não atrapalhar o parsing
+        sys.argv.remove('--release')
+        release_main()
+    else:
+        # Executar a aplicação normalmente
+        root = tk.Tk()
+        app = SSHClientGUI(root)
+        root.mainloop()
