@@ -1342,7 +1342,7 @@ class SSHClientGUI:
                 if icon_path:
                     break
             
-            # Passo 3: Configurar comando PyInstaller (30%)
+            # Passo 3: Configurar comando PyInstaller (40%)
             self.update_progress(40, "Configurando processo de compilação...")
             cmd = [
                 sys.executable,
@@ -1351,6 +1351,8 @@ class SSHClientGUI:
                 "--onefile",
                 "--windowed",
                 "--name=GerenciadorSSH",
+                "--noupx",          # Desativar UPX (pode causar problemas)
+                "--noconfirm",      # Não pedir confirmação
             ]
             
             # Adicionar ícone se encontrado
@@ -1367,29 +1369,32 @@ class SSHClientGUI:
             # Filtrar argumentos vazios (não deve ser necessário, mas por segurança)
             cmd = [arg for arg in cmd if arg]
             
-            # Passo 4: Executar PyInstaller (40%-90%)
-            self.update_progress(50, "Compilando aplicativo (pode demorar alguns minutos)...")
-            process = subprocess.Popen(
-                cmd, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE,
-                creationflags=subprocess.CREATE_NO_WINDOW  # Evita janelas pop-up
-            )
-            
-            # Simular progresso durante a compilação
-            progress = 50
-            while process.poll() is None:
-                time.sleep(0.5)
-                progress = min(progress + 1, 90)
-                self.update_progress(progress, f"Compilando... {progress}%")
-            
-            # Processar resultado (90%-100%)
-            stdout, stderr = process.communicate()
-            if process.returncode == 0:
-                self.update_progress(100, "Executável gerado com sucesso na pasta 'dist'!")
-            else:
-                error_msg = f"Erro ao gerar executável:\n\n{stderr.decode(errors='ignore')}"
-                self.update_progress(100, error_msg)
+            # Passo 4: Executar PyInstaller (50%-90%)
+            self.update_progress(50, "Compilando aplicativo (esta etapa pode demorar vários minutos)...")
+            try:
+                # Usar run com timeout de 15 minutos (900 segundos)
+                result = subprocess.run(
+                    cmd, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=900   # 15 minutos
+                )
+                
+                if result.returncode == 0:
+                    self.update_progress(100, "✅ Executável gerado com sucesso na pasta 'dist'!")
+                else:
+                    # Filtrar mensagens de erro relevantes
+                    error_lines = result.stderr.splitlines()
+                    # Remover linhas com INFO, DEBUG, etc.
+                    error_lines = [line for line in error_lines 
+                                  if not re.match(r'^\d+ INFO:', line) and
+                                     not re.match(r'^\d+ DEBUG:', line)]
+                    error_msg = "Erro ao gerar executável:\n" + "\n".join(error_lines[-10:])  # Últimas 10 linhas
+                    self.update_progress(100, error_msg)
+                
+            except subprocess.TimeoutExpired:
+                self.update_progress(100, "⏱️ Tempo esgotado! A compilação demorou mais que 15 minutos.")
             
             # Excluir o script temporário
             try:
@@ -1398,10 +1403,9 @@ class SSHClientGUI:
                 pass
             
         except Exception as e:
-            self.update_progress(100, f"Falha ao gerar executável: {str(e)}")
-        finally:
-            # Manter a barra de progresso visível com o resultado final
-            pass
+            import traceback
+            tb = traceback.format_exc()
+            self.update_progress(100, f"💥 Falha crítica: {str(e)}\n\nDetalhes:\n{tb}")
 
     def create_temp_script_with_filters(self):
         """Cria um script temporário com os filtros permanentes atualizados"""
@@ -2592,7 +2596,7 @@ def release_main():
             "version": new_version,
             "release_date": datetime.now().strftime("%Y-%m-%d"),
             "exe_url": base_url + EXE_NAME,
-            "py_url": base_url + MAIN_SCRIPT,
+            "py_url": base_url + os.path.basename(MAIN_SCRIPT),
             "notes": ""
         }
         
@@ -2670,7 +2674,7 @@ def release_main():
                             tmp_file.write(f'SOFTWARE_VERSION = "{new_version}"\n')
                         else:
                             tmp_file.write(line)
-                
+            
                 temp_name = tmp_file.name
             
             # Substituir arquivo original
