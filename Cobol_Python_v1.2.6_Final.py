@@ -18,6 +18,7 @@ import json
 import urllib.request
 import shutil
 import socket
+import ast  # Adicionado para resolver o erro
 from cryptography.hazmat.primitives import hashes, padding, hmac
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -28,7 +29,7 @@ from cryptography.exceptions import InvalidSignature, InvalidTag
 IS_EXE = getattr(sys, 'frozen', False)
 
 # Versão do software - importante para atualizações
-SOFTWARE_VERSION = "1.2.6"  # Corrigido problema do ícone
+SOFTWARE_VERSION = "1.2.7"  # Corrigido problema de geração de executável
 
 # Oculta o console ao iniciar o .exe (Windows apenas)
 if sys.platform.startswith('win') and IS_EXE:
@@ -1372,29 +1373,50 @@ class SSHClientGUI:
             # Passo 4: Executar PyInstaller (50%-90%)
             self.update_progress(50, "Compilando aplicativo (esta etapa pode demorar vários minutos)...")
             try:
-                # Usar run com timeout de 15 minutos (900 segundos)
-                result = subprocess.run(
+                # Criar diretório temporário para build
+                build_dir = tempfile.mkdtemp()
+                
+                # Executar PyInstaller
+                process = subprocess.Popen(
                     cmd, 
                     stdout=subprocess.PIPE, 
-                    stderr=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
                     text=True,
-                    timeout=900   # 15 minutos
+                    cwd=build_dir
                 )
                 
-                if result.returncode == 0:
-                    self.update_progress(100, "✅ Executável gerado com sucesso na pasta 'dist'!")
-                else:
-                    # Filtrar mensagens de erro relevantes
-                    error_lines = result.stderr.splitlines()
-                    # Remover linhas com INFO, DEBUG, etc.
-                    error_lines = [line for line in error_lines 
-                                  if not re.match(r'^\d+ INFO:', line) and
-                                     not re.match(r'^\d+ DEBUG:', line)]
-                    error_msg = "Erro ao gerar executável:\n" + "\n".join(error_lines[-10:])  # Últimas 10 linhas
-                    self.update_progress(100, error_msg)
+                # Monitorar progresso em tempo real
+                while True:
+                    output = process.stdout.readline()
+                    if output == '' and process.poll() is not None:
+                        break
+                    if output:
+                        # Atualizar progresso baseado em padrões de saída
+                        if "Analyzing" in output:
+                            self.update_progress(60, "Analisando dependências...")
+                        elif "Processing" in output:
+                            self.update_progress(70, "Processando módulos...")
+                        elif "Building" in output:
+                            self.update_progress(80, "Construindo executável...")
                 
-            except subprocess.TimeoutExpired:
-                self.update_progress(100, "⏱️ Tempo esgotado! A compilação demorou mais que 15 minutos.")
+                # Verificar resultado
+                if process.returncode == 0:
+                    # Localizar o executável gerado
+                    dist_dir = os.path.join(build_dir, 'dist')
+                    if os.path.exists(dist_dir):
+                        exe_files = [f for f in os.listdir(dist_dir) if f.endswith('.exe')]
+                        if exe_files:
+                            exe_path = os.path.join(dist_dir, exe_files[0])
+                            self.update_progress(100, f"✅ Executável gerado com sucesso!\nCaminho: {exe_path}")
+                        else:
+                            self.update_progress(100, "❌ Executável não encontrado na pasta dist")
+                    else:
+                        self.update_progress(100, "❌ Pasta dist não encontrada")
+                else:
+                    self.update_progress(100, f"❌ Erro na compilação (código {process.returncode})")
+                
+            except Exception as e:
+                self.update_progress(100, f"💥 Falha na execução: {str(e)}")
             
             # Excluir o script temporário
             try:
@@ -1419,13 +1441,17 @@ class SSHClientGUI:
         for line in lines:
             stripped_line = line.strip()
             if stripped_line.startswith('PERMANENT_FILTER_USERS ='):
-                # Substituir pela lista atual da configuração
+                # Obter a lista atual de usuários bloqueados
                 users = self.admin_config.get('permanent_filter_users', PERMANENT_FILTER_USERS)
-                new_line = f"PERMANENT_FILTER_USERS = {users}\n"
+                # Formatar a lista como uma lista de strings
+                formatted_users = "[" + ", ".join([f"'{u}'" for u in users]) + "]"
+                new_line = f"PERMANENT_FILTER_USERS = {formatted_users}\n"
                 new_lines.append(new_line)
             elif stripped_line.startswith('PERMANENT_FILTER_COMMANDS ='):
+                # Obter a lista atual de comandos bloqueados
                 commands = self.admin_config.get('permanent_filter_commands', PERMANENT_FILTER_COMMANDS)
-                new_line = f"PERMANENT_FILTER_COMMANDS = {commands}\n"
+                formatted_commands = "[" + ", ".join([f"'{c}'" for c in commands]) + "]"
+                new_line = f"PERMANENT_FILTER_COMMANDS = {formatted_commands}\n"
                 new_lines.append(new_line)
             elif stripped_line.startswith('SOFTWARE_VERSION ='):
                 # Atualizar a versão para a atual
@@ -2008,13 +2034,6 @@ timeout /t 3 /nobreak >nul
         try:
             self.shell = self.client.invoke_shell()
             self.stop_receiver.clear()
-            
-            # Thread para receber dados do servidor
-            self.receiver_thread = threading.Thread(target=self.receive_output, daemon=True)
-            self.receiver_thread.start()
-            
-            self.append_output(f"Sessão interativa iniciada em {self.user_var.get()}@{self.host_var.get()}\n")
-            self.append_output("Digite comandos normalmente. Use 'exit' para sair\n\n")
             
         except Exception as e:
             messagebox.showerror("Erro", f"Erro ao iniciar sessão: {str(e)}")
