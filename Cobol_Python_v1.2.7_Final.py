@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import sys
 import subprocess
@@ -18,6 +19,8 @@ import json
 import urllib.request
 import shutil
 import socket
+import glob
+import traceback
 from cryptography.hazmat.primitives import hashes, padding, hmac
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -43,17 +46,7 @@ logger = logging.getLogger('ssh_tool')
 # FILTROS PERMANENTES
 PERMANENT_FILTER_USERS = ['root', 'zabbix', 'sshd', 'postfix', 'nscd', 'message+', 'usertra+', 'prod', 'fatura', 'logist', 'lp']
 PERMANENT_FILTER_COMMANDS = [
-    '(sd-pam)', 
-    '-bash', 
-    '/opt/microfocu', 
-    '/opt/microfocus', 
-    '/usr/lib/system', 
-    'bash', 
-    'pg /d/work/est2', 
-    'ps aux', 
-    'sh /app/scripts', 
-    'sh /usr/bin/cha', 
-    '/usr/lib/ssh/sf'
+    '(sd-pam)', '-bash', '/opt/microfocu', '/opt/microfocus', '/usr/lib/system', 'bash', 'pg /d/work/est2', 'ps aux', 'sh /app/scripts', 'sh /usr/bin/cha', '/usr/lib/ssh/sf'
 ]
 
 class InteractiveHostKeyPolicy(paramiko.MissingHostKeyPolicy):
@@ -226,7 +219,7 @@ class SSHClientGUI:
         
         self.eye_button = ttk.Button(
             password_frame, 
-            text="👁", 
+            text="\U0001F441",  # Olho Unicode
             width=2, 
             command=self.toggle_password_visibility
         )
@@ -612,7 +605,7 @@ class SSHClientGUI:
             length=64,
             salt=salt,
             iterations=100000,
-            backend=default_backend()
+            backend=default_backend
         )
         return kdf.derive(cls.get_master_key().encode())
 
@@ -824,23 +817,27 @@ class SSHClientGUI:
                     config_frame.pack(fill=tk.BOTH, expand=True)
                     top.geometry("500x400")
                 else:
-                    messagebox.showerror("Erro", 
+                    messagebox.showerror(
+                        "Erro",
                         "Senha incorreta! A senha padrão é 'admin'. "
                         "Se você a alterou e esqueceu, clique em 'Esqueci a senha'.",
-                        parent=top)
+                        parent=top
+                    )
                     senha_entry.focus_set()
             elif admin_type == "master":
                 stored_hash = self.admin_config.get('master_password_hash')
-                input_hash = hashlib.sha256(password.encode()).hexdigest()
+                input_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()  # CORREÇÃO AQUI
                 if stored_hash and input_hash == stored_hash:
                     auth_frame.pack_forget()
                     type_frame.pack_forget()
                     master_config_frame.pack(fill=tk.BOTH, expand=True)
                     top.geometry("500x400")
                 else:
-                    messagebox.showerror("Erro", 
+                    messagebox.showerror(
+                        "Erro",
                         "Senha master incorreta!",
-                        parent=top)
+                        parent=top
+                    )
                     senha_entry.focus_set()
         
         def forgot_password():
@@ -977,119 +974,200 @@ class SSHClientGUI:
         threading.Thread(target=self._generate_executable_thread, daemon=True).start()
 
     def _generate_executable_thread(self):
+        temp_script_path = None
         try:
-            self.update_progress(10, "Criando script temporário...")
+            # Configurar diretórios temporários
+            self.update_progress(0, "Criando ambiente temporário...")
+            temp_dir = tempfile.mkdtemp()
+            build_dir = os.path.join(temp_dir, "build")
+            dist_dir = os.path.join(temp_dir, "dist")
+            os.makedirs(build_dir, exist_ok=True)
+            os.makedirs(dist_dir, exist_ok=True)
+
+            # Criar script temporário
+            self.update_progress(10, "Gerando script com filtros atualizados...")
             temp_script_path = self.create_temp_script_with_filters()
+            
+            # Verificar e instalar PyInstaller se necessário
             self.update_progress(20, "Verificando dependências...")
             try:
                 import PyInstaller
             except ImportError:
                 self.update_progress(30, "Instalando PyInstaller...")
-                subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
-            icon_path = None
-            base_paths = [os.path.dirname(os.path.abspath(__file__)), os.getcwd()]
-            if getattr(sys, 'frozen', False):
-                base_paths.insert(0, sys._MEIPASS)
-            icon_names = [
-                "logoicogrupoprofarma.ico", 
-                "logo.ico", 
-                "icon.ico",
-                "logoicogrupoprofarma.png",
-                "logo.png"
-            ]
-            for base_path in base_paths:
-                for icon_name in icon_names:
-                    candidate = os.path.join(base_path, icon_name)
-                    if os.path.exists(candidate):
-                        icon_path = candidate
-                        break
-                if icon_path:
-                    break
-            self.update_progress(40, "Configurando processo de compilação...")
+                subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"], check=True)
+            
+            # Configurar comando de compilação
+            self.update_progress(40, "Preparando parâmetros de compilação...")
+            icon_path = self.find_application_icon()
             cmd = [
                 sys.executable,
                 "-m",
                 "PyInstaller",
                 "--onefile",
                 "--windowed",
-                "--name=GerenciadorSSH",
+                "--clean",
+                f"--name=GerenciadorSSH_{SOFTWARE_VERSION}",
+                "--distpath", dist_dir,
+                "--workpath", build_dir,
+                "--specpath", temp_dir,
                 "--noupx",
-                "--noconfirm",
+                temp_script_path
             ]
+            
             if icon_path:
                 cmd.append(f"--icon={icon_path}")
-                self.update_progress(45, f"Usando ícone: {os.path.basename(icon_path)}")
-            if os.path.exists("logoicogrupoprofarma.png"):
-                cmd.append("--add-data=logoicogrupoprofarma.png;.")
-            cmd.append(temp_script_path)
-            cmd = [arg for arg in cmd if arg]
-            self.update_progress(50, "Compilando aplicativo (esta etapa pode demorar vários minutos)...")
-            try:
-                build_dir = tempfile.mkdtemp()
-                process = subprocess.Popen(
-                    cmd, 
-                    stdout=subprocess.PIPE, 
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    cwd=build_dir
-                )
-                while True:
-                    output = process.stdout.readline()
-                    if output == '' and process.poll() is not None:
-                        break
-                    if output:
-                        if "Analyzing" in output:
-                            self.update_progress(60, "Analisando dependências...")
-                        elif "Processing" in output:
-                            self.update_progress(70, "Processando módulos...")
-                        elif "Building" in output:
-                            self.update_progress(80, "Construindo executável...")
-                if process.returncode == 0:
-                    dist_dir = os.path.join(build_dir, 'dist')
-                    if os.path.exists(dist_dir):
-                        exe_files = [f for f in os.listdir(dist_dir) if f.endswith('.exe')]
-                        if exe_files:
-                            exe_path = os.path.join(dist_dir, exe_files[0])
-                            self.update_progress(100, f"✅ Executável gerado com sucesso!\nCaminho: {exe_path}")
-                        else:
-                            self.update_progress(100, "❌ Executável não encontrado na pasta dist")
-                    else:
-                        self.update_progress(100, "❌ Pasta dist não encontrada")
+            
+            # Adicionar recursos adicionais - BUSCA ROBUSTA DO LOGO
+            data_files = []
+            base_paths = [
+                os.path.dirname(os.path.abspath(__file__)),
+                os.getcwd(),
+                os.path.expanduser("~"),
+                os.path.join(os.path.expanduser("~"), "Documents"),
+                os.path.join(os.path.expanduser("~"), "Desktop"),
+                "C:\\",
+                "D:\\"
+            ]
+            
+            for base_path in base_paths:
+                candidate = os.path.join(base_path, "logoicogrupoprofarma.png")
+                if os.path.exists(candidate):
+                    data_files.append(candidate)
+                    break
+            
+            # Copiar arquivos para o diretório temporário
+            for data_file in data_files:
+                shutil.copy(data_file, temp_dir)
+                cmd.append(f"--add-data={os.path.basename(data_file)};.")
+            
+            # Executar compilação
+            self.update_progress(50, "Iniciando compilação (pode levar alguns minutos)...")
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                cwd=temp_dir
+            )
+            
+            # Monitorar saída em tempo real
+            output_lines = []
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    output_lines.append(line)
+                    # Atualizar progresso baseado em palavras-chave
+                    if "Analyzing" in line:
+                        self.update_progress(60, "Analisando dependências...")
+                    elif "Processing" in line:
+                        self.update_progress(70, "Processando módulos...")
+                    elif "Building" in line:
+                        self.update_progress(80, "Construindo executável...")
+                    elif "Writing" in line:
+                        self.update_progress(90, "Gerando arquivo final...")
+            
+            # Verificar resultado
+            returncode = process.poll()
+            if returncode == 0:
+                # Encontrar executável gerado
+                exe_files = glob.glob(os.path.join(dist_dir, '*.exe'))
+                if exe_files:
+                    exe_path = exe_files[0]
+                    self.update_progress(100, f"Sucesso! Executável gerado:\n{exe_path}")
                 else:
-                    self.update_progress(100, f"❌ Erro na compilação (código {process.returncode})")
-            except Exception as e:
-                self.update_progress(100, f"💥 Falha na execução: {str(e)}")
+                    self.update_progress(100, "Atenção: Compilação concluída mas executável não encontrado")
+            else:
+                # Salvar log de erro
+                error_log_path = os.path.join(temp_dir, "erro_compilacao.log")
+                with open(error_log_path, 'w', encoding='utf-8') as f:
+                    f.writelines(output_lines)
+                self.update_progress(100, f"Erro na compilação (código {returncode})\nLog salvo em: {error_log_path}")
+                
+        except Exception as e:
+            error_msg = f"Falha crítica: {str(e)}\n\n{traceback.format_exc()}"
+            self.update_progress(100, error_msg)
+        finally:
+            # Limpeza final
             try:
-                os.unlink(temp_script_path)
+                if temp_script_path and os.path.exists(temp_script_path):
+                    os.unlink(temp_script_path)
             except Exception:
                 pass
-        except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            self.update_progress(100, f"💥 Falha crítica: {str(e)}\n\nDetalhes:\n{tb}")
+
+    def find_application_icon(self):
+        """Localiza o ícone do aplicativo nos caminhos possíveis"""
+        base_paths = []
+        if getattr(sys, 'frozen', False):
+            base_paths.append(sys._MEIPASS)
+        base_paths.append(os.path.dirname(os.path.abspath(__file__)))
+        base_paths.append(os.getcwd())
+        
+        icon_names = [
+            "logoicogrupoprofarma.ico",
+            "logo.ico",
+            "icon.ico",
+            "logoicogrupoprofarma.png",
+            "logo.png"
+        ]
+        
+        for base_path in base_paths:
+            for icon_name in icon_names:
+                candidate = os.path.join(base_path, icon_name)
+                if os.path.exists(candidate):
+                    return candidate
+        return None
 
     def create_temp_script_with_filters(self):
+        """Cria um script temporário com os filtros atualizados"""
         current_script = os.path.abspath(__file__)
         with open(current_script, 'r', encoding='utf-8') as f:
             lines = f.readlines()
+        
         new_lines = []
+        in_users_section = False
+        in_commands_section = False
+        
         for line in lines:
             stripped_line = line.strip()
+            
+            # Verificar se estamos em uma seção que precisa ser substituída
             if stripped_line.startswith('PERMANENT_FILTER_USERS ='):
+                in_users_section = True
                 users = self.admin_config.get('permanent_filter_users', PERMANENT_FILTER_USERS)
-                formatted_users = "[" + ", ".join([f"'{u}'" for u in users]) + "]"
-                new_line = f"PERMANENT_FILTER_USERS = {formatted_users}\n"
-                new_lines.append(new_line)
+                new_lines.append("PERMANENT_FILTER_USERS = [\n")
+                for user in users:
+                    new_lines.append(f"    '{user}',\n")
+                new_lines.append("]\n")
+                continue
             elif stripped_line.startswith('PERMANENT_FILTER_COMMANDS ='):
+                in_commands_section = True
                 commands = self.admin_config.get('permanent_filter_commands', PERMANENT_FILTER_COMMANDS)
-                formatted_commands = "[" + ", ".join([f"'{c}'" for c in commands]) + "]"
-                new_line = f"PERMANENT_FILTER_COMMANDS = {formatted_commands}\n"
-                new_lines.append(new_line)
-            elif stripped_line.startswith('SOFTWARE_VERSION ='):
-                new_line = f'SOFTWARE_VERSION = "{SOFTWARE_VERSION}"\n'
-                new_lines.append(new_line)
-            else:
-                new_lines.append(line)
+                new_lines.append("PERMANENT_FILTER_COMMANDS = [\n")
+                for cmd in commands:
+                    new_lines.append(f"    '{cmd}',\n")
+                new_lines.append("]\n")
+                continue
+            
+            # Verificar o fim das seções
+            if in_users_section and ']' in line:
+                in_users_section = False
+                continue
+            if in_commands_section and ']' in line:
+                in_commands_section = False
+                continue
+            
+            # Adicionar versão atualizada
+            if not in_users_section and not in_commands_section:
+                if stripped_line.startswith('SOFTWARE_VERSION ='):
+                    new_lines.append(f'SOFTWARE_VERSION = "{SOFTWARE_VERSION}"\n')
+                else:
+                    new_lines.append(line)
+        
+        # Escrever script temporário
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.py', delete=False) as temp_script:
             temp_script.writelines(new_lines)
             return temp_script.name
@@ -1206,10 +1284,10 @@ timeout /t 3 /nobreak >nul
         self.show_password = not self.show_password
         if self.show_password:
             self.password_entry.config(show="")
-            self.eye_button.config(text="🔒")
+            self.eye_button.config(text="\U0001F512")  # Cadeado Unicode
         else:
             self.password_entry.config(show="*")
-            self.eye_button.config(text="👁")
+            self.eye_button.config(text="\U0001F441")  # Olho Unicode
         self.password_entry.focus_set()
 
     def on_password_focus_in(self, event):
@@ -1302,7 +1380,7 @@ timeout /t 3 /nobreak >nul
             "10. DICAS AVANÇADAS\n"
             "   - Pressione Enter em campos de texto para ativar ações\n"
             "   - Clique nos cabeçalhos das tabelas para ordenar\n"
-            "   - Use o botão 👁 para mostrar/ocultar senha\n"
+            "   - Use o botão \U0001F441 para mostrar/ocultar senha\n"
             "   - Para selecionar todos os PIDs em uma tabela: Ctrl+A\n"
             "   - Para limpar seleção: clique em área vazia da tabela\n\n"
             "11. SEGURANÇA\n"
@@ -1529,6 +1607,9 @@ timeout /t 3 /nobreak >nul
         try:
             self.shell = self.client.invoke_shell()
             self.stop_receiver.clear()
+            # Iniciar thread para receber a saída
+            self.receiver_thread = threading.Thread(target=self.receive_output, daemon=True)
+            self.receiver_thread.start()
         except Exception as e:
             messagebox.showerror("Erro", f"Erro ao iniciar sessão: {str(e)}")
             self.host_combo.focus_set()
@@ -1924,10 +2005,8 @@ timeout /t 3 /nobreak >nul
             daemon=True
         ).start()
 
+# Inicialização da aplicação
 if __name__ == "__main__":
-    config_path = os.path.join(os.path.expanduser("~"), ".ssh_tool_config")
-    if '--reset-config' in sys.argv and os.path.exists(config_path):
-        os.unlink(config_path)
     root = tk.Tk()
     app = SSHClientGUI(root)
     root.mainloop()
