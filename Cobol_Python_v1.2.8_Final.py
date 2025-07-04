@@ -31,7 +31,7 @@ from cryptography.exceptions import InvalidSignature, InvalidTag
 IS_EXE = getattr(sys, 'frozen', False)
 
 # Versão do software
-SOFTWARE_VERSION = "1.2.7"
+SOFTWARE_VERSION = "1.2.8"  # Atualizada para nova versão
 
 # Oculta o console ao iniciar o .exe (Windows apenas)
 if sys.platform.startswith('win') and IS_EXE:
@@ -1158,23 +1158,23 @@ class SSHClientGUI:
             lines = f.readlines()
         
         new_lines = []
-        in_users_section = False
-        in_commands_section = False
+        skip_until_end = False  # Flag para pular linhas até o fim da lista
         
         for line in lines:
             stripped_line = line.strip()
             
             # Verificar se estamos em uma seção que precisa ser substituída
             if stripped_line.startswith('DEFAULT_FILTER_USERS ='):
-                in_users_section = True
+                skip_until_end = 'users'  # Começar a pular linhas
                 users = self.admin_config.get('permanent_filter_users', DEFAULT_FILTER_USERS)
                 new_lines.append("DEFAULT_FILTER_USERS = [\n")
                 for user in users:
                     new_lines.append(f"    '{user}',\n")
                 new_lines.append("]\n")
                 continue
+            
             elif stripped_line.startswith('DEFAULT_FILTER_COMMANDS ='):
-                in_commands_section = True
+                skip_until_end = 'commands'  # Começar a pular linhas
                 commands = self.admin_config.get('permanent_filter_commands', DEFAULT_FILTER_COMMANDS)
                 new_lines.append("DEFAULT_FILTER_COMMANDS = [\n")
                 for cmd in commands:
@@ -1182,20 +1182,17 @@ class SSHClientGUI:
                 new_lines.append("]\n")
                 continue
             
-            # Verificar o fim das seções
-            if in_users_section and ']' in line:
-                in_users_section = False
-                continue
-            if in_commands_section and ']' in line:
-                in_commands_section = False
-                continue
+            # Pular linhas até encontrar o fechamento da lista original
+            if skip_until_end:
+                if ']' in line:  # Fim da lista original
+                    skip_until_end = False
+                continue  # Pular todas as linhas até o fechamento
             
             # Adicionar versão atualizada
-            if not in_users_section and not in_commands_section:
-                if stripped_line.startswith('SOFTWARE_VERSION ='):
-                    new_lines.append(f'SOFTWARE_VERSION = "{SOFTWARE_VERSION}"\n')
-                else:
-                    new_lines.append(line)
+            if stripped_line.startswith('SOFTWARE_VERSION ='):
+                new_lines.append(f'SOFTWARE_VERSION = "{SOFTWARE_VERSION}"\n')
+            else:
+                new_lines.append(line)
         
         # Escrever script temporário
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.py', delete=False) as temp_script:
