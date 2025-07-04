@@ -254,7 +254,7 @@ class SSHClientGUI:
         
         self.disconnect_btn = ttk.Button(btn_frame, text="Desconectar", 
                                         command=self.disconnect, state=tk.DISABLED,
-                                        style='Red.TButton', width=10)
+                                        style='Red.TButton', width=12)
         self.disconnect_btn.pack(side=tk.LEFT, padx=2)
         
         self.admin_btn = ttk.Button(
