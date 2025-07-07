@@ -26,12 +26,13 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidSignature, InvalidTag
+from packaging import version  # NOVO IMPORT
 
 # Verificar se está rodando como executável empacotado (exe)
 IS_EXE = getattr(sys, 'frozen', False)
 
 # Versão do software
-SOFTWARE_VERSION = "1.2.8"  # Atualizada para nova versão
+SOFTWARE_VERSION = "1.2.9"  # Nova versão com sistema de auto-atualização
 
 # Oculta o console ao iniciar o .exe (Windows apenas)
 if sys.platform.startswith('win') and IS_EXE:
@@ -60,6 +61,218 @@ DEFAULT_FILTER_COMMANDS = [
     '/opt/',
     'pg -f'
 ]
+
+class AutoUpdater:
+    """Sistema robusto de auto-atualização"""
+    def __init__(self, gui_instance):
+        self.gui = gui_instance
+        self.current_version = SOFTWARE_VERSION
+        self.github_token = "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"
+        self.github_repo = "FranklinDeveloper/SSH"
+        self.releases_url = f"https://api.github.com/repos/{self.github_repo}/releases/latest"
+        self.update_in_progress = False
+
+    def get_github_data(self, url):
+        """Obtém dados da API do GitHub com autenticação"""
+        headers = {
+            "Authorization": f"Bearer {self.github_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code == 403:
+                logger.error("Erro 403: Limite de requisições excedido no GitHub")
+            elif e.code == 401:
+                logger.error("Erro 401: Token de acesso inválido ou expirado")
+            else:
+                logger.error(f"Erro HTTP {e.code}: {e.reason}")
+        except Exception as e:
+            logger.error(f"Erro na conexão: {str(e)}")
+        return None
+
+    def is_update_available(self, release_data):
+        """Verifica se há uma nova versão disponível"""
+        try:
+            latest_version = release_data["tag_name"].lstrip('v')
+            return version.parse(latest_version) > version.parse(self.current_version), latest_version
+        except Exception as e:
+            logger.error(f"Erro ao comparar versões: {str(e)}")
+            return False, None
+
+    def download_asset(self, asset_url, save_path):
+        """Baixa um asset do GitHub"""
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.github_token}",
+                "Accept": "application/octet-stream"
+            }
+            
+            req = urllib.request.Request(asset_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=30) as response:
+                with open(save_path, 'wb') as out_file:
+                    total_size = int(response.headers.get('content-length', 0))
+                    downloaded = 0
+                    chunk_size = 8192
+                    
+                    while True:
+                        chunk = response.read(chunk_size)
+                        if not chunk:
+                            break
+                        out_file.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        # Atualizar progresso
+                        if total_size > 0:
+                            progress = (downloaded / total_size) * 100
+                            self.gui.update_status(f"Baixando: {progress:.1f}%", "progress")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Erro no download: {str(e)}")
+            return False
+
+    def verify_file_integrity(self, file_path, expected_hash):
+        """Verifica a integridade do arquivo com SHA-256"""
+        try:
+            sha256 = hashlib.sha256()
+            with open(file_path, 'rb') as f:
+                while chunk := f.read(8192):
+                    sha256.update(chunk)
+                    
+            return sha256.hexdigest().lower() == expected_hash.lower()
+        except Exception as e:
+            logger.error(f"Erro na verificação: {str(e)}")
+            return False
+
+    def apply_update(self, temp_file):
+        """Substitui o executável atual pela nova versão"""
+        try:
+            current_exe = sys.executable
+            backup_exe = current_exe + ".bak"
+            
+            # Cria backup da versão atual
+            if os.path.exists(backup_exe):
+                os.remove(backup_exe)
+            shutil.copy(current_exe, backup_exe)
+            
+            # Substitui o executável
+            shutil.move(temp_file, current_exe)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Erro na aplicação da atualização: {str(e)}")
+            # Tenta restaurar o backup em caso de erro
+            if os.path.exists(backup_exe):
+                try:
+                    shutil.copy(backup_exe, current_exe)
+                except Exception:
+                    pass
+            return False
+
+    def restart_application(self):
+        """Reinicia a aplicação"""
+        if sys.platform.startswith('win'):
+            subprocess.Popen([sys.executable] + sys.argv, creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            subprocess.Popen([sys.executable] + sys.argv)
+        sys.exit()
+
+    def check_and_apply_update(self):
+        """Executa todo o processo de atualização"""
+        if self.update_in_progress:
+            return
+            
+        self.update_in_progress = True
+        self.gui.update_status("Verificando atualizações...", "progress")
+        
+        # Obtém informações da última release
+        release_data = self.get_github_data(self.releases_url)
+        if not release_data:
+            self.gui.update_status("Falha ao verificar atualizações", "error")
+            self.update_in_progress = False
+            return
+        
+        # Verifica se há atualização disponível
+        update_available, latest_version = self.is_update_available(release_data)
+        if not update_available:
+            self.gui.update_status("Você já tem a versão mais recente", "success")
+            self.update_in_progress = False
+            return
+        
+        self.gui.update_status(f"Nova versão encontrada: {latest_version}", "progress")
+        
+        # Encontra o asset correto para download
+        asset = next((a for a in release_data["assets"] 
+                     if a["name"].startswith("GerenciadorSSH") and a["name"].endswith(".exe")), None)
+        
+        if not asset:
+            self.gui.update_status("Nenhum asset compatível encontrado", "error")
+            self.update_in_progress = False
+            return
+        
+        # Encontra o hash correspondente
+        hash_asset = next((a for a in release_data["assets"] 
+                         if a["name"] == asset["name"] + ".sha256"), None)
+        
+        if not hash_asset:
+            self.gui.update_status("Hash de verificação não encontrado", "error")
+            self.update_in_progress = False
+            return
+        
+        # Cria diretório temporário
+        temp_dir = tempfile.mkdtemp()
+        exe_path = os.path.join(temp_dir, asset["name"])
+        hash_path = os.path.join(temp_dir, hash_asset["name"])
+        
+        # Baixa o executável
+        self.gui.update_status(f"Baixando {asset['name']}...", "progress")
+        if not self.download_asset(asset["browser_download_url"], exe_path):
+            self.gui.update_status("Falha no download da atualização", "error")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            self.update_in_progress = False
+            return
+        
+        # Baixa o hash
+        self.gui.update_status("Baixando verificação de integridade...", "progress")
+        if not self.download_asset(hash_asset["browser_download_url"], hash_path):
+            self.gui.update_status("Falha ao baixar verificação de integridade", "error")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            self.update_in_progress = False
+            return
+        
+        # Lê o hash esperado
+        try:
+            with open(hash_path, 'r') as f:
+                expected_hash = f.read().strip()
+        except Exception as e:
+            self.gui.update_status(f"Erro ao ler hash: {str(e)}", "error")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            self.update_in_progress = False
+            return
+        
+        # Verifica integridade
+        self.gui.update_status("Verificando integridade do arquivo...", "progress")
+        if not self.verify_file_integrity(exe_path, expected_hash):
+            self.gui.update_status("Falha na verificação de integridade!", "error")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            self.update_in_progress = False
+            return
+        
+        # Aplica a atualização
+        self.gui.update_status("Aplicando atualização...", "progress")
+        if self.apply_update(exe_path):
+            self.gui.update_status("Atualização aplicada com sucesso! Reiniciando...", "success")
+            time.sleep(2)
+            self.restart_application()
+        else:
+            self.gui.update_status("Falha ao aplicar a atualização", "error")
+        
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        self.update_in_progress = False
 
 class InteractiveHostKeyPolicy(paramiko.MissingHostKeyPolicy):
     """Política interativa para verificação de host keys"""
@@ -157,10 +370,13 @@ class SSHClientGUI:
         self.temp_ico_file = None
         self.load_application_icon()
         
+        # Inicializa o sistema de auto-atualização
+        self.updater = AutoUpdater(self)
+        
         self.all_processes = []
         self.host_history = []
         self.admin_config_file = os.path.join(os.path.expanduser("~"), ".ssh_tool_config")
-        self.DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/seu-usuario/seu-repositorio/main/version.json"
+        self.DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/FranklinDeveloper/SSH/main/version.json"
         self.admin_config = self.load_admin_config()
         self.permanent_filter = {
             'users': self.admin_config.get('permanent_filter_users', DEFAULT_FILTER_USERS),
@@ -555,8 +771,8 @@ class SSHClientGUI:
         footer_frame = ttk.Frame(root, relief=tk.SUNKEN, padding=(5, 3))
         footer_frame.pack(side=tk.BOTTOM, fill=tk.X)
         self.connection_status = tk.StringVar(value="Status: Desconectado")
-        status_label = ttk.Label(footer_frame, textvariable=self.connection_status)
-        status_label.pack(side=tk.LEFT, padx=5)
+        self.status_label = ttk.Label(footer_frame, textvariable=self.connection_status)
+        self.status_label.pack(side=tk.LEFT, padx=5)
         copyright_frame = ttk.Frame(footer_frame)
         copyright_frame.pack(side=tk.RIGHT, padx=5)
         ttk.Label(copyright_frame, text=f"© 2024 Franklin Tadeu v{SOFTWARE_VERSION}").pack(side=tk.LEFT)
@@ -592,6 +808,30 @@ class SSHClientGUI:
         self.capturing_tela = False
         self.tela_output = ""
         self.setup_treeview_bindings()
+
+    def update_status(self, message, msg_type=None):
+        """Atualiza a barra de status"""
+        self.connection_status.set(message)
+        
+        # Atualiza cores baseadas no tipo de mensagem
+        if msg_type == "error":
+            self.status_label.configure(background="#ffcccc", foreground="black")
+        elif msg_type == "success":
+            self.status_label.configure(background="#ccffcc", foreground="black")
+        elif msg_type == "progress":
+            self.status_label.configure(background="#ffffcc", foreground="black")
+        elif msg_type == "warning":
+            self.status_label.configure(background="#ffcc99", foreground="black")
+        else:
+            self.status_label.configure(background="#f0f0f0", foreground="black")
+        
+        # Atualiza o log
+        logger.info(f"[STATUS] {message}")
+
+    def check_for_updates(self):
+        """Inicia a verificação de atualizações em segundo plano"""
+        self.update_status("Verificando atualizações...", "progress")
+        threading.Thread(target=self.updater.check_and_apply_update, daemon=True).start()
 
     @classmethod
     def generate_salt(cls):
@@ -1199,108 +1439,6 @@ class SSHClientGUI:
             temp_script.writelines(new_lines)
             return temp_script.name
 
-    def check_for_updates(self):
-        try:
-            update_url = self.admin_config.get('update_url', self.DEFAULT_UPDATE_URL)
-            headers = {"User-Agent": "SSHManager/1.0"}
-            req = urllib.request.Request(update_url, headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as response:
-                data = json.loads(response.read().decode())
-                latest_version = data.get('version')
-                if IS_EXE:
-                    download_url = data.get('exe_url')
-                else:
-                    download_url = data.get('py_url')
-                if latest_version and download_url:
-                    if self.compare_versions(SOFTWARE_VERSION, latest_version) < 0:
-                        response = messagebox.askyesno(
-                            "Atualização Disponível",
-                            f"Uma nova versão ({latest_version}) está disponível!\n\n"
-                            f"Deseja atualizar agora?",
-                            parent=self.root
-                        )
-                        if response:
-                            self.download_and_update(download_url)
-                    else:
-                        messagebox.showinfo(
-                            "Sem Atualizações",
-                            "Você já está usando a versão mais recente do software.",
-                            parent=self.root
-                        )
-                else:
-                    messagebox.showerror(
-                        "Erro",
-                        "Não foi possível verificar atualizações. Formato inválido.",
-                        parent=self.root
-                    )
-        except Exception as e:
-            messagebox.showerror(
-                "Erro",
-                f"Falha ao verificar atualizações: {str(e)}",
-                parent=self.root
-            )
-
-    def compare_versions(self, current, latest):
-        current_parts = list(map(int, current.split('.')))
-        latest_parts = list(map(int, latest.split('.')))
-        while len(current_parts) < 3:
-            current_parts.append(0)
-        while len(latest_parts) < 3:
-            latest_parts.append(0)
-        for c, l in zip(current_parts, latest_parts):
-            if c < l:
-                return -1
-            elif c > l:
-                return 1
-        return 0
-
-    def download_and_update(self, download_url):
-        try:
-            temp_dir = tempfile.mkdtemp()
-            if IS_EXE:
-                temp_file = os.path.join(temp_dir, "update.exe")
-            else:
-                temp_file = os.path.join(temp_dir, "update.py")
-            with urllib.request.urlopen(download_url, timeout=30) as response:
-                with open(temp_file, 'wb') as out_file:
-                    shutil.copyfileobj(response, out_file)
-            if sys.platform.startswith('win'):
-                current_path = os.path.abspath(sys.argv[0])
-                script = f"""@echo off
-timeout /t 3 /nobreak >nul
-"""
-                if IS_EXE:
-                    script += f'taskkill /F /IM "{os.path.basename(current_path)}" >nul 2>&1\n'
-                    script += f'move /Y "{temp_file}" "{current_path}"\n'
-                    script += f'start "" "{current_path}"\n'
-                else:
-                    script += f'taskkill /F /IM "python.exe" >nul 2>&1\n'
-                    script += f'del /F /Q "{current_path}"\n'
-                    script += f'move /Y "{temp_file}" "{current_path}"\n'
-                    script += f'start "" "{current_path}"\n'
-                script += f'rmdir /s /q "{temp_dir}"\n'
-                script += 'del "%~f0"'
-                script_file = os.path.join(temp_dir, "update.bat")
-                with open(script_file, 'w') as f:
-                    f.write(script)
-                subprocess.Popen([script_file], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                self.safe_close()
-            else:
-                messagebox.showinfo(
-                    "Atualização Baixada",
-                    f"A nova versão foi baixada em:\n{temp_file}\n"
-                    "Por favor, instale manualmente.",
-                    parent=self.root
-                )
-            return True
-        except Exception as e:
-            messagebox.showerror(
-                "Erro na Atualização",
-                f"Falha ao baixar/instalar atualização: {str(e)}",
-                parent=self.root
-            )
-            return False
-
     def is_caps_lock_on(self):
         if sys.platform.startswith('win'):
             hll_dll = ctypes.WinDLL("User32.dll")
@@ -1351,7 +1489,7 @@ timeout /t 3 /nobreak >nul
         main_frame = ttk.Frame(help_window)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         instructions = (
-            "MANUAL COMPLETO DO GERENCIADOR SSH AVANÇADO\n\n"
+            "MANUAL COMPLETO DO GERENCIADOR SSH AVANÇADO v1.2.9\n\n"
             "1. CONEXÃO SSH\n"
             "   - Preencha os campos de Host, Usuário, Senha e Porta\n"
             "   - Clique em 'Conectar' ou pressione Enter no campo de senha\n"
@@ -1396,14 +1534,17 @@ timeout /t 3 /nobreak >nul
             "   - Filtros permanentes padrão:\n"
             "        Usuários bloqueados: root, zabbix, sshd, postfix, nscd, message+, usertra+, prod, fatura, logist, lp\n"
             "        Comandos bloqueados: (sd-pam), -bash, /opt/microfocu, /opt/microfocus, /usr/lib/system, bash, pg /d/work/est2, ps aux, sh /app/scripts, sh /usr/bin/cha, /usr/lib/ssh/sf\n\n"
-            "8. GERAÇÃO DE EXECUTÁVEL\n"
+            "8. SISTEMA DE AUTO-ATUALIZAÇÃO\n"
+            "   - Botão 'Verificar Atualizações' no rodapé\n"
+            "   - Verificação automática na inicialização\n"
+            "   - Processo seguro com verificação de integridade SHA256\n"
+            "   - Download em segundo plano com feedback de progresso\n"
+            "   - Reinício automático após atualização\n\n"
+            "9. GERAÇÃO DE EXECUTÁVEL\n"
             "   - Disponível para administradores master\n"
             "   - Gera versão .exe do aplicativo\n"
             "   - Barra de progresso mostra andamento real\n"
             "   - Pode levar alguns minutos para completar\n\n"
-            "9. ATUALIZAÇÕES\n"
-            "   - Botão 'Verificar Atualizações' no rodapé\n"
-            "   - O software busca automaticamente novas versões\n\n"
             "10. DICAS AVANÇADAS\n"
             "   - Pressione Enter em campos de texto para ativar ações\n"
             "   - Clique nos cabeçalhos das tabelas para ordenar\n"
@@ -1413,7 +1554,8 @@ timeout /t 3 /nobreak >nul
             "11. SEGURANÇA\n"
             "   - Host keys são verificadas e armazenadas\n"
             "   - Senhas administrativas são criptografadas\n"
-            "   - Conexões usam protocolo SSH seguro\n\n"
+            "   - Conexões usam protocolo SSH seguro\n"
+            "   - Auto-atualizações verificadas com SHA256\n\n"
             "CONTATO E SUPORTE:\n"
             "   WhatsApp: 31 99363-9500\n"
             "   LinkedIn: https://www.linkedin.com/in/franklintadeu/\n\n"
@@ -1572,7 +1714,7 @@ timeout /t 3 /nobreak >nul
             self.start_interactive_shell()
             self.connect_btn.config(state=tk.DISABLED)
             self.disconnect_btn.config(state=tk.NORMAL)
-            self.connection_status.set(f"Status: Conectado a {host}")
+            self.update_status(f"Conectado a {host}", "success")
             self.list_processes()
 
     def disconnect(self):
@@ -1590,11 +1732,11 @@ timeout /t 3 /nobreak >nul
                 self.output_text.config(state=tk.NORMAL)
                 self.output_text.insert(tk.END, "\n--- Conexão encerrada ---\n")
                 self.output_text.config(state=tk.DISABLED)
-                self.connection_status.set("Status: Desconectado")
+                self.update_status("Desconectado")
         else:
             self.connect_btn.config(state=tk.NORMAL)
             self.disconnect_btn.config(state=tk.DISABLED)
-            self.connection_status.set("Status: Desconectado")
+            self.update_status("Desconectado")
 
     def create_ssh_client(self, host, user, password, port=22):
         client = paramiko.SSHClient()
@@ -1615,12 +1757,15 @@ timeout /t 3 /nobreak >nul
             self.save_host_history(host)
             return client
         except paramiko.AuthenticationException:
+            self.update_status("Falha na autenticação", "error")
             messagebox.showerror("Erro", "Autenticação falhou. Verifique suas credenciais.")
             self.host_combo.focus_set()
         except paramiko.SSHException as e:
+            self.update_status(f"Erro SSH: {str(e)}", "error")
             messagebox.showerror("Erro", f"Erro na conexão SSH: {str(e)}")
             self.host_combo.focus_set()
         except Exception as e:
+            self.update_status(f"Erro inesperado: {str(e)}", "error")
             messagebox.showerror("Erro", f"Erro inesperado: {str(e)}")
             self.host_combo.focus_set()
         self.root.after(100, lambda: self.connect_btn.config(state=tk.NORMAL))
@@ -1628,6 +1773,7 @@ timeout /t 3 /nobreak >nul
 
     def start_interactive_shell(self):
         if not self.client:
+            self.update_status("Não conectado", "error")
             messagebox.showerror("Erro", "Não conectado!")
             self.host_combo.focus_set()
             return
@@ -1638,6 +1784,7 @@ timeout /t 3 /nobreak >nul
             self.receiver_thread = threading.Thread(target=self.receive_output, daemon=True)
             self.receiver_thread.start()
         except Exception as e:
+            self.update_status(f"Erro ao iniciar sessão: {str(e)}", "error")
             messagebox.showerror("Erro", f"Erro ao iniciar sessão: {str(e)}")
             self.host_combo.focus_set()
             self.disconnect()
@@ -1662,6 +1809,7 @@ timeout /t 3 /nobreak >nul
         if not command:
             return
         if not self.shell:
+            self.update_status("Sessão interativa não está ativa!", "error")
             messagebox.showerror("Erro", "Sessão interativa não está ativa!")
             self.host_combo.focus_set()
             return
@@ -1672,6 +1820,7 @@ timeout /t 3 /nobreak >nul
             self.shell.send(command + "\n")
             self.cmd_var.set("")
         except Exception as e:
+            self.update_status(f"Erro ao enviar comando: {str(e)}", "error")
             messagebox.showerror("Erro", f"Erro ao enviar comando: {str(e)}")
             self.host_combo.focus_set()
             self.disconnect()
@@ -1690,6 +1839,7 @@ timeout /t 3 /nobreak >nul
 
     def execute_commands(self):
         if not self.client:
+            self.update_status("Não conectado", "error")
             messagebox.showerror("Erro", "Não conectado!")
             self.host_combo.focus_set()
             return
@@ -1723,14 +1873,17 @@ timeout /t 3 /nobreak >nul
                     result += f"Comando falhou com status: {exit_status}\n"
                 self.root.after(0, self.append_result, result)
         except paramiko.SSHException as e:
+            self.root.after(0, self.update_status, f"Falha na execução: {str(e)}", "error")
             self.root.after(0, messagebox.showerror, "Erro", f"Falha na execução: {str(e)}")
             self.root.after(0, self.disconnect)
         except Exception as e:
+            self.root.after(0, self.update_status, f"Erro inesperado: {str(e)}", "error")
             self.root.after(0, messagebox.showerror, "Erro", f"Erro inesperado: {str(e)}")
             self.root.after(0, self.disconnect)
 
     def list_processes(self):
         if not self.client:
+            self.update_status("Não conectado", "error")
             messagebox.showerror("Erro", "Não conectado!")
             self.host_combo.focus_set()
             return
@@ -1745,6 +1898,7 @@ timeout /t 3 /nobreak >nul
             output = stdout.read().decode(errors='ignore').strip()
             error = stderr.read().decode(errors='ignore').strip()
             if error:
+                self.root.after(0, self.update_status, f"Erro ao listar processos: {error}", "error")
                 self.root.after(0, messagebox.showerror, "Erro", f"Erro ao listar processos: {error}")
                 return
             processes = []
@@ -1778,6 +1932,7 @@ timeout /t 3 /nobreak >nul
             for proc in self.all_processes:
                 self.root.after(0, self.add_process_to_tree, proc)
         except Exception as e:
+            self.root.after(0, self.update_status, f"Falha ao listar processos: {str(e)}", "error")
             self.root.after(0, messagebox.showerror, "Erro", f"Falha ao listar processos: {str(e)}")
             self.root.after(0, self.disconnect)
     
@@ -1791,11 +1946,13 @@ timeout /t 3 /nobreak >nul
 
     def kill_pids(self):
         if not self.client:
+            self.update_status("Não conectado", "error")
             messagebox.showerror("Erro", "Não conectado!")
             self.host_combo.focus_set()
             return
         pids_input = self.pids_var.get().strip()
         if not pids_input:
+            self.update_status("Nenhum PID especificado", "warning")
             messagebox.showwarning("Aviso", "Nenhum PID especificado!")
             return
         pids = []
@@ -1803,6 +1960,7 @@ timeout /t 3 /nobreak >nul
             if part.strip():
                 pids.append(part.strip())
         if not pids:
+            self.update_status("Nenhum PID válido encontrado", "warning")
             messagebox.showwarning("Aviso", "Nenhum PID válido encontrado!")
             return
         confirm_message = (
@@ -1814,6 +1972,7 @@ timeout /t 3 /nobreak >nul
         if not confirm:
             return
         if not self.shell:
+            self.update_status("Sessão interativa não está ativa!", "error")
             messagebox.showerror("Erro", "Sessão interativa não está ativa!")
             self.host_combo.focus_set()
             return
@@ -1838,12 +1997,15 @@ timeout /t 3 /nobreak >nul
                 self.shell.send(cmd + "\n")
                 time.sleep(0.5)
             self.root.after(0, self.append_output, "\nComandos enviados. Verifique o terminal.\n")
+            self.root.after(0, self.update_status, f"{len(pids)} processos derrubados", "success")
         except Exception as e:
+            self.root.after(0, self.update_status, f"Erro ao derrubar processos: {str(e)}", "error")
             self.root.after(0, messagebox.showerror, "Erro", f"Erro ao derrubar processos: {str(e)}")
             self.root.after(0, self.disconnect)
     
     def consultar_matricula(self):
         if not self.client:
+            self.update_status("Não conectado", "error")
             messagebox.showerror("Erro", "Não conectado!")
             self.host_combo.focus_set()
             return
@@ -1880,9 +2042,10 @@ timeout /t 3 /nobreak >nul
             self.root.after(0, self.process_matricula_output, matricula)
         except Exception as e:
             self.capturing_matricula = False
-            self.root.after(0, messagebox.showerror, "Erro", f"Erro ao consultar matrícula: {str(e)}")
+            self.root.after(0, self.update_status, f"Erro ao consultar matrícula: {str(e)}", "error")
             self.root.after(0, self.matricula_status_var.set, 
                           f"Erro na operação: {str(e)}")
+            self.root.after(0, messagebox.showerror, "Erro", f"Erro ao consultar matrícula: {str(e)}")
             self.root.after(0, self.disconnect)
 
     def clear_matricula_results(self):
@@ -1895,20 +2058,25 @@ timeout /t 3 /nobreak >nul
             matches = re.findall(pattern, self.matricula_output, re.MULTILINE)
             if not matches:
                 self.matricula_status_var.set(f"Nenhum processo encontrado para {matricula}")
+                self.update_status(f"Nenhum processo encontrado para {matricula}", "warning")
                 return
             for match in matches:
                 self.result_tree.insert('', tk.END, values=match)
             self.matricula_status_var.set(f"Consulta concluída: {len(matches)} processos encontrados")
+            self.update_status(f"{len(matches)} processos encontrados para {matricula}", "success")
         except Exception as e:
             self.matricula_status_var.set(f"Erro ao processar resultados: {str(e)}")
+            self.update_status(f"Erro ao processar resultados: {str(e)}", "error")
     
     def derrubar_pid_selecionado(self):
         if not self.client:
+            self.update_status("Não conectado", "error")
             messagebox.showerror("Erro", "Não conectado!")
             self.host_combo.focus_set()
             return
         selected_items = self.result_tree.selection()
         if not selected_items:
+            self.update_status("Nenhum PID selecionado", "warning")
             messagebox.showwarning("Aviso", "Nenhum PID selecionado na tabela!")
             return
         pids = []
@@ -1918,6 +2086,7 @@ timeout /t 3 /nobreak >nul
                 pid = values[1]
                 pids.append(pid)
         if not pids:
+            self.update_status("Nenhum PID válido selecionado", "warning")
             messagebox.showwarning("Aviso", "Nenhum PID válido selecionado!")
             return
         confirm_message = (
@@ -1929,6 +2098,7 @@ timeout /t 3 /nobreak >nul
         if not confirm:
             return
         if not self.shell:
+            self.update_status("Sessão interativa não está ativa!", "error")
             messagebox.showerror("Erro", "Sessão interativa não está ativa!")
             self.host_combo.focus_set()
             return
@@ -1940,6 +2110,7 @@ timeout /t 3 /nobreak >nul
     
     def consultar_tela(self):
         if not self.client:
+            self.update_status("Não conectado", "error")
             messagebox.showerror("Erro", "Não conectado!")
             self.host_combo.focus_set()
             return
@@ -1976,9 +2147,10 @@ timeout /t 3 /nobreak >nul
             self.root.after(0, self.process_tela_output, tela)
         except Exception as e:
             self.capturing_tela = False
-            self.root.after(0, messagebox.showerror, "Erro", f"Erro ao consultar tela: {str(e)}")
+            self.root.after(0, self.update_status, f"Erro ao consultar tela: {str(e)}", "error")
             self.root.after(0, self.tela_status_var.set, 
                           f"Erro na operação: {str(e)}")
+            self.root.after(0, messagebox.showerror, "Erro", f"Erro ao consultar tela: {str(e)}")
             self.root.after(0, self.disconnect)
 
     def clear_tela_results(self):
@@ -1991,20 +2163,25 @@ timeout /t 3 /nobreak >nul
             matches = re.findall(pattern, self.tela_output, re.MULTILINE)
             if not matches:
                 self.tela_status_var.set(f"Nenhum processo encontrado para {tela}")
+                self.update_status(f"Nenhum processo encontrado para {tela}", "warning")
                 return
             for match in matches:
                 self.tela_tree.insert('', tk.END, values=match)
             self.tela_status_var.set(f"Consulta concluída: {len(matches)} processos encontrados")
+            self.update_status(f"{len(matches)} telas encontradas para {tela}", "success")
         except Exception as e:
             self.tela_status_var.set(f"Erro ao processar resultados: {str(e)}")
+            self.update_status(f"Erro ao processar resultados: {str(e)}", "error")
     
     def derrubar_pid_tela(self):
         if not self.client:
+            self.update_status("Não conectado", "error")
             messagebox.showerror("Erro", "Não conectado!")
             self.host_combo.focus_set()
             return
         selected_items = self.tela_tree.selection()
         if not selected_items:
+            self.update_status("Nenhum PID selecionado", "warning")
             messagebox.showwarning("Aviso", "Nenhum PID selecionado na tabela!")
             return
         pids = []
@@ -2014,6 +2191,7 @@ timeout /t 3 /nobreak >nul
                 pid = values[1]
                 pids.append(pid)
         if not pids:
+            self.update_status("Nenhum PID válido selecionado", "warning")
             messagebox.showwarning("Aviso", "Nenhum PID válido selecionado!")
             return
         confirm_message = (
@@ -2025,6 +2203,7 @@ timeout /t 3 /nobreak >nul
         if not confirm:
             return
         if not self.shell:
+            self.update_status("Sessão interativa não está ativa!", "error")
             messagebox.showerror("Erro", "Sessão interativa não está ativa!")
             self.host_combo.focus_set()
             return

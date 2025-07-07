@@ -1,10 +1,6 @@
 {
-  "name": "SSH",
-  "version": "1.2.6",
-  "description": "Gerenciamento de conexões SSH",
-  "author": "Franklin Tadeu",
-  "date": "2025-07-02",  
-  "py_url": "https://github.com/FranklinDeveloper/SSH/raw/main/Cobol_Python_v1.2.6_Final.py",
-  "exe_url": "https://github.com/FranklinDeveloper/SSH/releases/download/v1.2.6/GerenciadorSSH.exe",
-  "changelog": "Correção do ícone e melhorias na interface."
+    "version": "1.2.9",
+    "release_date": "2023-11-25",
+    "download_url": "https://github.com/FranklinDeveloper/SSH/releases/download/v1.2.9/GerenciadorSSH_1.2.9.exe",
+    "sha256": "a1b2c3d4e5f6... (hash SHA256 do arquivo)"
 }
