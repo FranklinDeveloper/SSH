@@ -33,7 +33,7 @@ from packaging import version
 IS_EXE = getattr(sys, 'frozen', False)
 
 # Versão do software
-SOFTWARE_VERSION = "1.2.10"
+SOFTWARE_VERSION = "1.2.11"
 
 # Oculta o console ao iniciar o .exe (Windows apenas)
 if sys.platform.startswith('win') and IS_EXE:
