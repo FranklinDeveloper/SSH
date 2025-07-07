@@ -21,18 +21,19 @@ import shutil
 import socket
 import glob
 import traceback
+import fnmatch
 from cryptography.hazmat.primitives import hashes, padding, hmac
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidSignature, InvalidTag
-from packaging import version  # NOVO IMPORT
+from packaging import version
 
 # Verificar se está rodando como executável empacotado (exe)
 IS_EXE = getattr(sys, 'frozen', False)
 
 # Versão do software
-SOFTWARE_VERSION = "1.2.9"  # Nova versão com sistema de auto-atualização
+SOFTWARE_VERSION = "1.2.9"
 
 # Oculta o console ao iniciar o .exe (Windows apenas)
 if sys.platform.startswith('win') and IS_EXE:
@@ -67,8 +68,6 @@ class AutoUpdater:
     def __init__(self, gui_instance):
         self.gui = gui_instance
         self.current_version = SOFTWARE_VERSION
-        # REMOVIDO: Token expirado/inválido
-        # self.github_token = "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"
         self.github_repo = "FranklinDeveloper/SSH"
         self.releases_url = f"https://api.github.com/repos/{self.github_repo}/releases/latest"
         self.update_in_progress = False
@@ -186,17 +185,30 @@ class AutoUpdater:
             return
         
         # Verifica se há atualização disponível
-        update_available, latest_version = self.is_update_available(release_data)
-        if not update_available:
+        latest_version = release_data.get('tag_name', '').lstrip('v')
+        if not latest_version:
+            self.gui.update_status("Versão não encontrada", "error")
+            self.update_in_progress = False
+            return
+            
+        if version.parse(latest_version) <= version.parse(self.current_version):
             self.gui.update_status("Você já tem a versão mais recente", "success")
             self.update_in_progress = False
             return
         
         self.gui.update_status(f"Nova versão encontrada: {latest_version}", "progress")
         
+        # Nova verificação de tipo de arquivo
+        if IS_EXE:
+            asset_pattern = f"GerenciadorSSH*.exe"
+            hash_pattern = asset_pattern + ".sha256"
+        else:
+            asset_pattern = f"SSH*.py"
+            hash_pattern = asset_pattern + ".sha256"
+
         # Encontra o asset correto para download
         asset = next((a for a in release_data["assets"] 
-                     if a["name"].startswith("GerenciadorSSH") and a["name"].endswith(".exe")), None)
+                     if fnmatch.fnmatch(a["name"], asset_pattern)), None)
         
         if not asset:
             self.gui.update_status("Nenhum asset compatível encontrado", "error")
@@ -205,7 +217,7 @@ class AutoUpdater:
         
         # Encontra o hash correspondente
         hash_asset = next((a for a in release_data["assets"] 
-                         if a["name"] == asset["name"] + ".sha256"), None)
+                         if fnmatch.fnmatch(a["name"], hash_pattern)), None)
         
         if not hash_asset:
             self.gui.update_status("Hash de verificação não encontrado", "error")
@@ -958,6 +970,8 @@ class SSHClientGUI:
             "logo.png",
             "icon.png"
         ]
+        
+        # Primeiro: tentar carregar ícone ICO diretamente
         for base_path in base_paths:
             for icon_name in icon_filenames:
                 try:
@@ -967,25 +981,46 @@ class SSHClientGUI:
                             self.root.iconbitmap(image_path)
                             icon_found = True
                             logger.info(f"Ícone carregado: {image_path}")
-                            break
-                        else:
-                            img_icon = Image.open(image_path)
-                            img_icon = img_icon.resize((32, 32), Image.LANCZOS)
-                            with tempfile.NamedTemporaryFile(delete=False, suffix='.ico') as temp_ico:
-                                img_icon.save(temp_ico.name, format='ICO')
-                                self.temp_ico_file = temp_ico.name
-                            self.root.iconbitmap(self.temp_ico_file)
-                            icon_found = True
-                            logger.info(f"Ícone convertido e carregado: {image_path}")
-                            break
+                            return
                 except Exception as e:
                     logger.error(f"Erro ao carregar ícone: {str(e)}")
                     continue
-            if icon_found:
-                break
+        
+        # Segundo: converter PNG para ICO se necessário
+        for base_path in base_paths:
+            for icon_name in icon_filenames:
+                try:
+                    image_path = os.path.join(base_path, icon_name)
+                    if os.path.exists(image_path) and icon_name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                        img_icon = Image.open(image_path)
+                        img_icon = img_icon.resize((32, 32), Image.LANCZOS)
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.ico') as temp_ico:
+                            img_icon.save(temp_ico.name, format='ICO')
+                            self.temp_ico_file = temp_ico.name
+                        self.root.iconbitmap(self.temp_ico_file)
+                        icon_found = True
+                        logger.info(f"Ícone convertido e carregado: {image_path}")
+                        return
+                except Exception as e:
+                    logger.error(f"Erro ao converter ícone: {str(e)}")
+                    continue
+        
+        # Terceiro: tentar carregar ícone embutido (quando compilado)
+        if not icon_found and IS_EXE:
+            try:
+                base_path = sys._MEIPASS
+                icon_path = os.path.join(base_path, "logoicogrupoprofarma.ico")
+                if os.path.exists(icon_path):
+                    self.root.iconbitmap(icon_path)
+                    icon_found = True
+                    logger.info(f"Ícone embutido carregado: {icon_path}")
+            except Exception as e:
+                logger.error(f"Falha ao carregar ícone embutido: {str(e)}")
+        
+        # Quarto: ícone padrão do sistema
         if not icon_found:
             try:
-                self.root.iconbitmap(default='')
+                self.root.iconbitmap(default='')  # Ícone padrão do sistema
                 logger.warning("Usando ícone padrão do sistema")
             except Exception:
                 logger.error("Falha ao carregar qualquer ícone")
@@ -1236,9 +1271,16 @@ class SSHClientGUI:
                 self.update_progress(30, "Instalando PyInstaller...")
                 subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"], check=True)
             
+            # Configurar ícone
+            icon_path = self.find_application_icon()
+            if not icon_path:
+                # Tentar converter PNG para ICO se necessário
+                png_path = self.find_png_icon()
+                if png_path:
+                    icon_path = self.convert_png_to_ico(png_path, temp_dir)
+            
             # Configurar comando de compilação
             self.update_progress(40, "Preparando parâmetros de compilação...")
-            icon_path = self.find_application_icon()
             cmd = [
                 sys.executable,
                 "-m",
@@ -1251,11 +1293,12 @@ class SSHClientGUI:
                 "--workpath", build_dir,
                 "--specpath", temp_dir,
                 "--noupx",
+                "--add-data", f"{temp_script_path};.",
                 temp_script_path
             ]
             
             if icon_path:
-                cmd.append(f"--icon={icon_path}")
+                cmd.extend(["--icon", icon_path])
             
             # Adicionar recursos adicionais - BUSCA ROBUSTA DO LOGO
             data_files = []
@@ -1369,8 +1412,7 @@ class SSHClientGUI:
             "logoicogrupoprofarma.ico",
             "logo.ico",
             "icon.ico",
-            "logoicogrupoprofarma.png",
-            "logo.png"
+            "app_icon.ico"
         ]
         
         for base_path in base_paths:
@@ -1379,6 +1421,39 @@ class SSHClientGUI:
                 if os.path.exists(candidate):
                     return candidate
         return None
+
+    def find_png_icon(self):
+        base_paths = [
+            os.path.dirname(os.path.abspath(__file__)),
+            os.getcwd(),
+            os.path.expanduser("~"),
+            os.path.join(os.path.expanduser("~"), "Documents"),
+            os.path.join(os.path.expanduser("~"), "Desktop"),
+        ]
+        
+        icon_names = [
+            "logoicogrupoprofarma.png",
+            "logo.png",
+            "icon.png"
+        ]
+        
+        for base_path in base_paths:
+            for icon_name in icon_names:
+                candidate = os.path.join(base_path, icon_name)
+                if os.path.exists(candidate):
+                    return candidate
+        return None
+
+    def convert_png_to_ico(self, png_path, output_dir):
+        try:
+            from PIL import Image
+            img = Image.open(png_path)
+            ico_path = os.path.join(output_dir, "temp_icon.ico")
+            img.save(ico_path, format='ICO', sizes=[(32,32), (48,48), (64,64)])
+            return ico_path
+        except Exception as e:
+            logger.error(f"Erro ao converter PNG para ICO: {str(e)}")
+            return None
 
     def create_temp_script_with_filters(self):
         """Cria um script temporário com os filtros atualizados"""
@@ -1863,10 +1938,14 @@ class SSHClientGUI:
                 self.root.after(0, self.append_result, result)
         except paramiko.SSHException as e:
             self.root.after(0, self.update_status, f"Falha na execução: {str(e)}", "error")
+            self.root.after(0, self.matricula_status_var.set, 
+                          f"Erro na operação: {str(e)}")
             self.root.after(0, messagebox.showerror, "Erro", f"Falha na execução: {str(e)}")
             self.root.after(0, self.disconnect)
         except Exception as e:
             self.root.after(0, self.update_status, f"Erro inesperado: {str(e)}", "error")
+            self.root.after(0, self.matricula_status_var.set, 
+                          f"Erro na operação: {str(e)}")
             self.root.after(0, messagebox.showerror, "Erro", f"Erro inesperado: {str(e)}")
             self.root.after(0, self.disconnect)
 
