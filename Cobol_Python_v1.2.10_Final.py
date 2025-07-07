@@ -955,85 +955,77 @@ class SSHClientGUI:
             return False
 
     def load_application_icon(self):
-        icon_found = False
+        """Carrega o ícone para todas as janelas"""
+        self.ico_path = self.find_application_icon()
+        if self.ico_path:
+            try:
+                self.root.iconbitmap(self.ico_path)
+            except Exception as e:
+                logger.error(f"Erro ao carregar ícone principal: {str(e)}")
+                self.try_convert_png_to_ico()
+        else:
+            self.try_convert_png_to_ico()
+    
+    def try_convert_png_to_ico(self):
+        """Tenta converter um PNG para ICO se necessário"""
+        png_path = self.find_png_icon()
+        if png_path:
+            try:
+                from PIL import Image
+                img = Image.open(png_path)
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.ico') as temp_ico:
+                    img.save(temp_ico.name, format='ICO')
+                    self.ico_path = temp_ico.name
+                    self.root.iconbitmap(self.ico_path)
+            except ImportError:
+                logger.error("Pillow não instalado, não é possível converter PNG para ICO")
+            except Exception as e:
+                logger.error(f"Erro ao converter PNG para ICO: {str(e)}")
+    
+    def find_application_icon(self):
+        """Localiza o ícone do aplicativo nos caminhos possíveis"""
         base_paths = []
         if getattr(sys, 'frozen', False):
             base_paths.append(sys._MEIPASS)
         base_paths.append(os.path.dirname(os.path.abspath(__file__)))
         base_paths.append(os.getcwd())
-        icon_filenames = [
+        
+        icon_names = [
             "logoicogrupoprofarma.ico",
-            "logoicogrupoprofarma.png",
             "logo.ico",
             "icon.ico",
-            "app_icon.ico",
+            "app_icon.ico"
+        ]
+        
+        for base_path in base_paths:
+            for icon_name in icon_names:
+                candidate = os.path.join(base_path, icon_name)
+                if os.path.exists(candidate):
+                    return candidate
+        return None
+
+    def find_png_icon(self):
+        """Localiza um ícone PNG para conversão"""
+        base_paths = [
+            os.path.dirname(os.path.abspath(__file__)),
+            os.getcwd(),
+            os.path.expanduser("~"),
+            os.path.join(os.path.expanduser("~"), "Documents"),
+            os.path.join(os.path.expanduser("~"), "Desktop"),
+        ]
+        
+        icon_names = [
+            "logoicogrupoprofarma.png",
             "logo.png",
             "icon.png"
         ]
         
-        # Primeiro: tentar carregar ícone ICO diretamente
         for base_path in base_paths:
-            for icon_name in icon_filenames:
-                try:
-                    image_path = os.path.join(base_path, icon_name)
-                    if os.path.exists(image_path):
-                        if icon_name.endswith('.ico'):
-                            self.root.iconbitmap(image_path)
-                            icon_found = True
-                            logger.info(f"Ícone carregado: {image_path}")
-                            return
-                except Exception as e:
-                    logger.error(f"Erro ao carregar ícone: {str(e)}")
-                    continue
-        
-        # Segundo: converter PNG para ICO se necessário
-        for base_path in base_paths:
-            for icon_name in icon_filenames:
-                try:
-                    image_path = os.path.join(base_path, icon_name)
-                    if os.path.exists(image_path) and icon_name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                        img_icon = Image.open(image_path)
-                        img_icon = img_icon.resize((32, 32), Image.LANCZOS)
-                        with tempfile.NamedTemporaryFile(delete=False, suffix='.ico') as temp_ico:
-                            img_icon.save(temp_ico.name, format='ICO')
-                            self.temp_ico_file = temp_ico.name
-                        self.root.iconbitmap(self.temp_ico_file)
-                        icon_found = True
-                        logger.info(f"Ícone convertido e carregado: {image_path}")
-                        return
-                except Exception as e:
-                    logger.error(f"Erro ao converter ícone: {str(e)}")
-                    continue
-        
-        # Terceiro: tentar carregar ícone embutido (quando compilado)
-        if not icon_found and IS_EXE:
-            try:
-                base_path = sys._MEIPASS
-                icon_path = os.path.join(base_path, "logoicogrupoprofarma.ico")
-                if os.path.exists(icon_path):
-                    self.root.iconbitmap(icon_path)
-                    icon_found = True
-                    logger.info(f"Ícone embutido carregado: {icon_path}")
-            except Exception as e:
-                logger.error(f"Falha ao carregar ícone embutido: {str(e)}")
-        
-        # Quarto: ícone padrão do sistema
-        if not icon_found:
-            try:
-                self.root.iconbitmap(default='')  # Ícone padrão do sistema
-                logger.warning("Usando ícone padrão do sistema")
-            except Exception:
-                logger.error("Falha ao carregar qualquer ícone")
-
-    def setup_treeview_bindings(self):
-        for tree in [self.process_tree, self.result_tree, self.tela_tree]:
-            tree.bind("<Control-a>", self.select_all_treeview)
-            tree.bind("<Control-A>", self.select_all_treeview)
-
-    def select_all_treeview(self, event):
-        tree = event.widget
-        tree.selection_set(tree.get_children())
-        return "break"
+            for icon_name in icon_names:
+                candidate = os.path.join(base_path, icon_name)
+                if os.path.exists(candidate):
+                    return candidate
+        return None
 
     def show_admin_dialog(self):
         top = tk.Toplevel(self.root)
@@ -1043,15 +1035,20 @@ class SSHClientGUI:
         top.resizable(False, False)
         top.transient(self.root)
         top.grab_set()
-        try:
-            if self.temp_ico_file:
-                top.iconbitmap(self.temp_ico_file)
-            else:
-                self.load_application_icon()
-                if self.temp_ico_file:
-                    top.iconbitmap(self.temp_ico_file)
-        except Exception:
-            pass
+        
+        # Aplicar o ícone na janela de administrador
+        if hasattr(self, 'ico_path') and self.ico_path and os.path.exists(self.ico_path):
+            try:
+                top.iconbitmap(self.ico_path)
+            except Exception as e:
+                logger.error(f"Erro ao carregar ícone para admin: {str(e)}")
+        else:
+            self.try_convert_png_to_ico()
+            if hasattr(self, 'ico_path') and self.ico_path and os.path.exists(self.ico_path):
+                try:
+                    top.iconbitmap(self.ico_path)
+                except Exception:
+                    pass
         main_frame = ttk.Frame(top, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
         type_frame = ttk.LabelFrame(main_frame, text="Tipo de Acesso")
