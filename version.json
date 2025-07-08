@@ -1,12 +1,12 @@
 {
-    "version": "1.2.11",
-    "release_date": "2024-05-15",
-    "exe_url": "https://github.com/FranklinDeveloper/SSH/releases/download/v1.2.11/GerenciadorSSH_1.2.11.exe",
-    "sha256": "a1b2c3d4e5f6...",
-    "release_notes": [
-        "Sistema de auto-atualização integrado",
-        "Manual de ajuda completo atualizado",
-        "Interface de status aprimorada",
-        "Otimizações de segurança"
-    ]
+  "version": "1.2.11",
+  "release_date": "2025-07-08",
+  "download_url": "https://github.com/FranklinDeveloper/SSH/releases/download/v1.2.11/GerenciadorSSH_v1.2.11.exe",
+  "changelog": [
+    "Correções de segurança na criptografia",
+    "Melhoria no sistema de auto-atualização",
+    "Otimização de desempenho na listagem de processos",
+    "Correção de bugs na interface administrativa",
+    "Novos filtros padrão para comandos bloqueados"
+  ]
 }
