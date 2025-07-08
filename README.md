@@ -4,6 +4,13 @@ Ferramenta com interface gráfica para administração remota de sistemas Cobol 
 
 ## Histórico de Versões
 
+- **1.2.11** (07/07/2025)  
+  - Correções de segurança na criptografia  
+  - Melhoria no sistema de auto-atualização  
+  - Otimização de desempenho na listagem de processos  
+  - Correção de bugs na interface administrativa  
+  - Novos filtros padrão para comandos bloqueados  
+
 - **1.2.9**  
   - **Sistema de autoatualização completo** com verificação de integridade via SHA256  
   - **Geração de executável `.exe` personalizada** com filtros e ícone incluídos  
