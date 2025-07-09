@@ -162,13 +162,20 @@ class AutoUpdater:
                 # Substituir o executável
                 bat_file.write(f'move /Y "{temp_file}" "{current_exe}" > nul\n')
                 # Iniciar o novo executável
-                bat_file.write(f'start "" "{current_exe}"\n')
+                bat_file.write(f'start "" /B "{current_exe}"\n')  # Modificado: /B para evitar nova janela
                 # Excluir o script
                 bat_file.write(f'del "%~f0"\n')
             
             # Executar o script batch em segundo plano
-            creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith('win') else 0
-            subprocess.Popen([batch_script], shell=True, creationflags=creation_flags)
+            creation_flags = subprocess.CREATE_NO_WINDOW
+            subprocess.Popen(
+                [batch_script], 
+                shell=True, 
+                creationflags=creation_flags,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
             return True
         except Exception as e:
             logger.error(f"Erro na aplicação da atualização: {str(e)}")
@@ -272,8 +279,10 @@ class AutoUpdater:
         self.gui.update_status("Aplicando atualização...", "progress")
         if self.apply_update(exe_path):
             self.gui.update_status("Atualização aplicada com sucesso! Reiniciando...", "success")
-            time.sleep(2)
-            sys.exit(0)  # Encerra a aplicação para o script batch assumir
+            # Fechar todas as janelas antes de sair
+            if self.gui.root:
+                self.gui.root.destroy()
+            sys.exit(0)  # Saída limpa
         else:
             self.gui.update_status("Falha ao aplicar a atualização", "error")
         
@@ -1254,14 +1263,10 @@ class SSHClientGUI:
         admin_type_var.trace_add("write", lambda *args: update_auth_ui())
 
     def update_progress(self, value, message):
-        # Verifica se a janela de administração ainda existe
-        if hasattr(self, 'admin_dialog') and self.admin_dialog and self.admin_dialog.winfo_exists():
+        if self.admin_dialog and self.admin_dialog.winfo_exists():
             self.progress_bar['value'] = value
             self.progress_label.config(text=message)
             self.admin_dialog.update()
-        else:
-            # Se a janela foi fechada, não tenta atualizar
-            pass
 
     def generate_executável(self):
         self.progress_frame.pack(fill=tk.X, pady=5, padx=5)
@@ -1353,7 +1358,7 @@ class SSHClientGUI:
                 encoding='utf-8',
                 errors='replace',
                 cwd=temp_dir,
-                creationflags=subprocess.CREATE_NO_WINDOW  # Adiciona esta flag para Windows
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
             
             # Monitorar saída em tempo real
@@ -1425,7 +1430,7 @@ class SSHClientGUI:
                 
         except Exception as e:
             error_msg = f"Falha crítica: {str(e)}\n\n{traceback.format_exc()}"
-            self.root.after(0, self.update_progress, 100, error_msg)
+            self.update_progress(100, error_msg)
         finally:
             # Limpeza final
             try:
@@ -1443,7 +1448,7 @@ class SSHClientGUI:
         return sha256.hexdigest()
 
     def save_executável_dialog(self, source_exe, version_path, sha256_path, readme_path):
-        # Fechar a janela de progresso antes de abrir o diálogo
+        # Fechar o frame de progresso antes de abrir o diálogo
         if hasattr(self, 'progress_frame') and self.progress_frame.winfo_ismapped():
             self.progress_frame.pack_forget()
             
