@@ -28,6 +28,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidSignature, InvalidTag
 from packaging import version
+from datetime import datetime
 
 # Verificar se está rodando como executável empacotado (exe)
 IS_EXE = getattr(sys, 'frozen', False)
@@ -75,7 +76,8 @@ class AutoUpdater:
     def get_github_data(self, url):
         """Obtém dados da API do GitHub SEM autenticação"""
         headers = {
-            "Accept": "application/vnd.github.v3+json"
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "SSHClientGUI"
         }
         
         try:
@@ -97,7 +99,8 @@ class AutoUpdater:
         """Baixa um asset do GitHub SEM autenticação"""
         try:
             headers = {
-                "Accept": "application/octet-stream"
+                "Accept": "application/octet-stream",
+                "User-Agent": "SSHClientGUI"
             }
             
             req = urllib.request.Request(asset_url, headers=headers)
@@ -200,26 +203,26 @@ class AutoUpdater:
         
         self.gui.update_status(f"Nova versão encontrada: {latest_version}", "progress")
         
-        # Nova verificação de tipo de arquivo
-        if IS_EXE:
-            asset_pattern = f"GerenciadorSSH*.exe"
-            hash_pattern = asset_pattern + ".sha256"
-        else:
-            asset_pattern = f"SSH*.py"
-            hash_pattern = asset_pattern + ".sha256"
-
         # Encontra o asset correto para download
-        asset = next((a for a in release_data["assets"] 
-                     if fnmatch.fnmatch(a["name"], asset_pattern)), None)
+        asset = None
+        hash_asset = None
+        
+        for a in release_data["assets"]:
+            if a["name"].startswith("GerenciadorSSH") and a["name"].endswith(".exe"):
+                asset = a
+                # Procurar pelo arquivo de hash correspondente
+                hash_name = a["name"] + ".sha256"
+                for ha in release_data["assets"]:
+                    if ha["name"] == hash_name:
+                        hash_asset = ha
+                        break
+                if hash_asset:
+                    break
         
         if not asset:
             self.gui.update_status("Nenhum asset compatível encontrado", "error")
             self.update_in_progress = False
             return
-        
-        # Encontra o hash correspondente
-        hash_asset = next((a for a in release_data["assets"] 
-                         if fnmatch.fnmatch(a["name"], hash_pattern)), None)
         
         if not hash_asset:
             self.gui.update_status("Hash de verificação não encontrado", "error")
@@ -1221,7 +1224,8 @@ class SSHClientGUI:
             master_btn_frame, 
             text="Gerar Executável",
             command=self.generate_executável,
-            style='Green.TButton'
+            style='Green.TButton',
+            width=14
         )
         generate_exe_btn.pack(side=tk.LEFT, padx=5)
         cancel_btn = ttk.Button(master_btn_frame, text="Cancelar", command=top.destroy)
@@ -1250,10 +1254,14 @@ class SSHClientGUI:
         admin_type_var.trace_add("write", lambda *args: update_auth_ui())
 
     def update_progress(self, value, message):
-        if self.admin_dialog and self.admin_dialog.winfo_exists():
+        # Verifica se a janela de administração ainda existe
+        if hasattr(self, 'admin_dialog') and self.admin_dialog and self.admin_dialog.winfo_exists():
             self.progress_bar['value'] = value
             self.progress_label.config(text=message)
             self.admin_dialog.update()
+        else:
+            # Se a janela foi fechada, não tenta atualizar
+            pass
 
     def generate_executável(self):
         self.progress_frame.pack(fill=tk.X, pady=5, padx=5)
@@ -1344,7 +1352,8 @@ class SSHClientGUI:
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                cwd=temp_dir
+                cwd=temp_dir,
+                creationflags=subprocess.CREATE_NO_WINDOW  # Adiciona esta flag para Windows
             )
             
             # Monitorar saída em tempo real
@@ -1373,8 +1382,38 @@ class SSHClientGUI:
                 if exe_files:
                     exe_path = exe_files[0]
                     
+                    # GERAR VERSION.JSON E SHA256
+                    self.update_progress(95, "Gerando arquivos de versão e verificação...")
+                    
+                    # Criar version.json
+                    version_data = {
+                        "version": SOFTWARE_VERSION,
+                        "release_date": datetime.now().strftime("%Y-%m-%d"),
+                        "download_url": f"https://github.com/{self.updater.github_repo}/releases/download/v{SOFTWARE_VERSION}/GerenciadorSSH_{SOFTWARE_VERSION}.exe"
+                    }
+                    version_path = os.path.join(dist_dir, "version.json")
+                    with open(version_path, 'w') as vf:
+                        json.dump(version_data, vf, indent=2)
+                    
+                    # Calcular SHA256 do executável
+                    sha256_hash = self.calculate_sha256(exe_path)
+                    sha256_path = exe_path + ".sha256"
+                    with open(sha256_path, 'w') as sf:
+                        sf.write(sha256_hash)
+                    
+                    # Criar README.md básico
+                    readme_path = os.path.join(dist_dir, "README.md")
+                    with open(readme_path, 'w') as rf:
+                        rf.write(f"# Gerenciador SSH Avançado v{SOFTWARE_VERSION}\n\n")
+                        rf.write("Ferramenta para gerenciamento de conexões SSH e processos remotos.\n\n")
+                        rf.write("## Como usar\n")
+                        rf.write("1. Execute o arquivo `GerenciadorSSH_{SOFTWARE_VERSION}.exe`\n")
+                        rf.write("2. Preencha os dados de conexão SSH\n")
+                        rf.write("3. Utilize as diversas funcionalidades disponíveis nas abas\n\n")
+                        rf.write(f"**SHA256 Checksum**: `{sha256_hash}`\n")
+                    
                     # Abrir diálogo para salvar
-                    self.root.after(0, self.save_executável_dialog, exe_path)
+                    self.root.after(0, self.save_executável_dialog, exe_path, version_path, sha256_path, readme_path)
                 else:
                     self.update_progress(100, "Atenção: Compilação concluída mas executável não encontrado")
             else:
@@ -1386,7 +1425,7 @@ class SSHClientGUI:
                 
         except Exception as e:
             error_msg = f"Falha crítica: {str(e)}\n\n{traceback.format_exc()}"
-            self.update_progress(100, error_msg)
+            self.root.after(0, self.update_progress, 100, error_msg)
         finally:
             # Limpeza final
             try:
@@ -1395,22 +1434,54 @@ class SSHClientGUI:
             except Exception:
                 pass
 
-    def save_executável_dialog(self, source_path):
-        dest_path = filedialog.asksaveasfilename(
-            defaultextension=".exe",
-            filetypes=[("Executável", "*.exe")],
-            initialfile=f"GerenciadorSSH_{SOFTWARE_VERSION}.exe",
-            title="Salvar executável como"
+    def calculate_sha256(self, file_path):
+        """Calcula o hash SHA256 de um arquivo"""
+        sha256 = hashlib.sha256()
+        with open(file_path, 'rb') as f:
+            while chunk := f.read(8192):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+
+    def save_executável_dialog(self, source_exe, version_path, sha256_path, readme_path):
+        # Fechar a janela de progresso antes de abrir o diálogo
+        if hasattr(self, 'progress_frame') and self.progress_frame.winfo_ismapped():
+            self.progress_frame.pack_forget()
+            
+        dest_dir = filedialog.askdirectory(
+            title="Selecione a pasta para salvar os arquivos"
         )
         
-        if dest_path:
+        if dest_dir:
             try:
-                shutil.copy(source_path, dest_path)
-                self.update_progress(100, f"Sucesso! Executável salvo em:\n{dest_path}")
+                # Copiar executável
+                exe_name = os.path.basename(source_exe)
+                dest_exe = os.path.join(dest_dir, exe_name)
+                shutil.copy(source_exe, dest_exe)
+                
+                # Copiar version.json
+                shutil.copy(version_path, os.path.join(dest_dir, "version.json"))
+                
+                # Copiar SHA256
+                sha256_name = os.path.basename(sha256_path)
+                dest_sha256 = os.path.join(dest_dir, sha256_name)
+                shutil.copy(sha256_path, dest_sha256)
+                
+                # Copiar README.md
+                shutil.copy(readme_path, os.path.join(dest_dir, "README.md"))
+                
+                messagebox.showinfo(
+                    "Sucesso", 
+                    f"Arquivos gerados com sucesso em:\n{dest_dir}\n\n"
+                    f"• Executável: {exe_name}\n"
+                    f"• version.json\n"
+                    f"• {sha256_name}\n"
+                    f"• README.md\n\n"
+                    "Subir todos os arquivos para o GitHub na nova release."
+                )
             except Exception as e:
-                self.update_progress(100, f"Erro ao salvar o executável: {str(e)}")
+                messagebox.showerror("Erro", f"Erro ao salvar arquivos: {str(e)}")
         else:
-            self.update_progress(100, "Operação cancelada pelo usuário.")
+            messagebox.showinfo("Informação", "Operação cancelada pelo usuário.")
 
     def convert_png_to_ico(self, png_path, output_dir):
         try:
