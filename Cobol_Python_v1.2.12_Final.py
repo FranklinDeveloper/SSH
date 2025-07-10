@@ -1276,6 +1276,9 @@ class SSHClientGUI:
     def _generate_executável_thread(self):
         temp_script_path = None
         try:
+            # Desabilitar botão durante a compilação
+            self.root.after(0, lambda: self.generate_exe_btn.config(state=tk.DISABLED))
+            
             # Configurar diretórios temporários
             self.update_progress(0, "Criando ambiente temporário...")
             temp_dir = tempfile.mkdtemp()
@@ -1383,10 +1386,16 @@ class SSHClientGUI:
             returncode = process.poll()
             if returncode == 0:
                 # Encontrar executável gerado
-                exe_files = glob.glob(os.path.join(dist_dir, '*.exe'))
-                if exe_files:
-                    exe_path = exe_files[0]
-                    
+                exe_name = f"GerenciadorSSH_{SOFTWARE_VERSION}.exe"
+                exe_path = os.path.join(dist_dir, exe_name)
+                
+                # Verificação adicional caso o nome seja diferente
+                if not os.path.exists(exe_path):
+                    exe_files = glob.glob(os.path.join(dist_dir, '*.exe'))
+                    if exe_files:
+                        exe_path = exe_files[0]
+                
+                if os.path.exists(exe_path):
                     # GERAR VERSION.JSON E SHA256
                     self.update_progress(95, "Gerando arquivos de versão e verificação...")
                     
@@ -1394,7 +1403,7 @@ class SSHClientGUI:
                     version_data = {
                         "version": SOFTWARE_VERSION,
                         "release_date": datetime.now().strftime("%Y-%m-%d"),
-                        "download_url": f"https://github.com/{self.updater.github_repo}/releases/download/v{SOFTWARE_VERSION}/GerenciadorSSH_{SOFTWARE_VERSION}.exe"
+                        "download_url": f"https://github.com/{self.updater.github_repo}/releases/download/v{SOFTWARE_VERSION}/{os.path.basename(exe_path)}"
                     }
                     version_path = os.path.join(dist_dir, "version.json")
                     with open(version_path, 'w') as vf:
@@ -1421,17 +1430,37 @@ class SSHClientGUI:
                     self.root.after(0, self.save_executável_dialog, exe_path, version_path, sha256_path, readme_path)
                 else:
                     self.update_progress(100, "Atenção: Compilação concluída mas executável não encontrado")
+                    error_log_path = os.path.join(temp_dir, "erro_compilacao.log")
+                    with open(error_log_path, 'w', encoding='utf-8') as f:
+                        f.writelines(output_lines)
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Erro na Compilação", 
+                        "Executável não encontrado após compilação. "
+                        f"Verifique o log em: {error_log_path}"
+                    ))
             else:
                 # Salvar log de erro
                 error_log_path = os.path.join(temp_dir, "erro_compilacao.log")
                 with open(error_log_path, 'w', encoding='utf-8') as f:
                     f.writelines(output_lines)
                 self.update_progress(100, f"Erro na compilação (código {returncode})\nLog salvo em: {error_log_path}")
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Erro na Compilação", 
+                    f"Falha na compilação (código {returncode}). "
+                    f"Verifique o log em: {error_log_path}"
+                ))
                 
         except Exception as e:
             error_msg = f"Falha crítica: {str(e)}\n\n{traceback.format_exc()}"
             self.update_progress(100, error_msg)
+            self.root.after(0, lambda: messagebox.showerror(
+                "Erro na Compilação", 
+                f"Erro inesperado: {str(e)}\n\nVerifique os logs para mais detalhes."
+            ))
         finally:
+            # Reabilitar botão após operação
+            self.root.after(0, lambda: self.generate_exe_btn.config(state=tk.NORMAL))
+            
             # Limpeza final
             try:
                 if temp_script_path and os.path.exists(temp_script_path):
@@ -1507,13 +1536,15 @@ class SSHClientGUI:
         
         new_lines = []
         skip_until_end = False  # Flag para pular linhas até o fim da lista
+        skip_section = None     # Qual seção está sendo pulada
         
         for line in lines:
             stripped_line = line.strip()
             
             # Verificar se estamos em uma seção que precisa ser substituída
             if stripped_line.startswith('DEFAULT_FILTER_USERS ='):
-                skip_until_end = 'users'  # Começar a pular linhas
+                skip_until_end = True
+                skip_section = 'users'
                 users = self.admin_config.get('permanent_filter_users', DEFAULT_FILTER_USERS)
                 new_lines.append("DEFAULT_FILTER_USERS = [\n")
                 for user in users:
@@ -1522,7 +1553,8 @@ class SSHClientGUI:
                 continue
             
             elif stripped_line.startswith('DEFAULT_FILTER_COMMANDS ='):
-                skip_until_end = 'commands'  # Começar a pular linhas
+                skip_until_end = True
+                skip_section = 'commands'
                 commands = self.admin_config.get('permanent_filter_commands', DEFAULT_FILTER_COMMANDS)
                 new_lines.append("DEFAULT_FILTER_COMMANDS = [\n")
                 for cmd in commands:
@@ -1532,8 +1564,12 @@ class SSHClientGUI:
             
             # Pular linhas até encontrar o fechamento da lista original
             if skip_until_end:
-                if ']' in line:  # Fim da lista original
+                if skip_section == 'users' and ']' in line:
                     skip_until_end = False
+                    skip_section = None
+                elif skip_section == 'commands' and ']' in line:
+                    skip_until_end = False
+                    skip_section = None
                 continue  # Pular todas as linhas até o fechamento
             
             # Adicionar versão atualizada
@@ -2308,7 +2344,7 @@ class SSHClientGUI:
             return
         confirm_message = (
             f"Tem certeza que deseja derrubar {len(pids)} processo(s)?\n\n"
-            f"PIDs: {', '.join(pids)}\n\n"
+            f"PIDs: {, ', '.join(pids)}\n\n"
             "Esta operação usará o menu interativo do sistema."
         )
         confirm = messagebox.askyesno("Confirmar Operação", confirm_message)
