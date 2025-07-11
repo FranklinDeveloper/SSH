@@ -2344,7 +2344,7 @@ class SSHClientGUI:
             return
         confirm_message = (
             f"Tem certeza que deseja derrubar {len(pids)} processo(s)?\n\n"
-            f"PIDs: {, ', '.join(pids)}\n\n"
+            f"PIDs: {', '.join(pids)}\n\n"
             "Esta operação usará o menu interativo do sistema."
         )
         confirm = messagebox.askyesno("Confirmar Operação", confirm_message)
