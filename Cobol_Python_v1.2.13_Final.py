@@ -34,7 +34,7 @@ from datetime import datetime
 IS_EXE = getattr(sys, 'frozen', False)
 
 # Versão do software
-SOFTWARE_VERSION = "1.2.12"
+SOFTWARE_VERSION = "1.2.13"
 
 # Oculta o console ao iniciar o .exe (Windows apenas)
 if sys.platform.startswith('win') and IS_EXE:
@@ -1085,6 +1085,16 @@ class SSHClientGUI:
         
         save_btn = ttk.Button(master_btn_frame, text="Salvar Configuração", command=save_master_config, style='Green.TButton')
         save_btn.pack(side=tk.LEFT, padx=5)
+
+        # NOVO BOTÃO: Gerar Executável
+        generate_btn = ttk.Button(
+            master_btn_frame, 
+            text="Gerar Executável",
+            command=self.generate_executable,
+            width=15
+        )
+        generate_btn.pack(side=tk.LEFT, padx=5)
+        
         cancel_btn = ttk.Button(master_btn_frame, text="Cancelar", command=top.destroy)
         cancel_btn.pack(side=tk.LEFT)
         top.update_idletasks()
@@ -1102,6 +1112,94 @@ class SSHClientGUI:
         
         update_auth_ui()
         admin_type_var.trace_add("write", lambda *args: update_auth_ui())
+
+    # NOVA FUNÇÃO: Gerar executável
+    def generate_executable(self):
+        """Gera um executável temporário e pergunta onde salvar"""
+        try:
+            # Verificar se está rodando como script Python
+            if getattr(sys, 'frozen', False):
+                messagebox.showinfo(
+                    "Informação", 
+                    "Você já está executando uma versão empacotada.",
+                    parent=self.root
+                )
+                return
+            
+            # Criar um arquivo temporário
+            temp_exe = tempfile.NamedTemporaryFile(
+                suffix='.exe', 
+                delete=False,
+                prefix='SSHClient_'
+            )
+            temp_path = temp_exe.name
+            temp_exe.close()
+            
+            # Atualizar status
+            self.update_status("Gerando executável temporário...", "progress")
+            
+            # Comando para gerar o executável
+            script_path = os.path.abspath(__file__)
+            cmd = [
+                sys.executable,
+                "-m",
+                "PyInstaller",
+                "--onefile",
+                "--windowed",
+                "--name=SSHClient",
+                f"--distpath={os.path.dirname(temp_path)}",
+                f"--workpath={tempfile.gettempdir()}",
+                f"--specpath={tempfile.gettempdir()}",
+                script_path
+            ]
+            
+            # Executar o comando
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            stdout, stderr = process.communicate()
+            
+            if process.returncode != 0:
+                error_msg = f"Falha na geração: {stderr.decode(errors='ignore')}"
+                logger.error(error_msg)
+                messagebox.showerror(
+                    "Erro", 
+                    f"Falha ao gerar executável:\n{error_msg}",
+                    parent=self.root
+                )
+                return
+            
+            # Perguntar onde salvar
+            save_path = filedialog.asksaveasfilename(
+                defaultextension=".exe",
+                filetypes=[("Executável", "*.exe")],
+                title="Salvar executável como"
+            )
+            
+            if not save_path:
+                os.unlink(temp_path)
+                return
+            
+            # Mover o arquivo temporário para o destino
+            shutil.move(temp_path, save_path)
+            
+            self.update_status(f"Executável gerado: {save_path}", "success")
+            messagebox.showinfo(
+                "Sucesso", 
+                f"Executável gerado com sucesso em:\n{save_path}",
+                parent=self.root
+            )
+            
+        except Exception as e:
+            logger.error(f"Erro ao gerar executável: {str(e)}")
+            messagebox.showerror(
+                "Erro", 
+                f"Erro ao gerar executável:\n{str(e)}",
+                parent=self.root
+            )
 
     def is_caps_lock_on(self):
         if sys.platform.startswith('win'):
@@ -1153,7 +1251,7 @@ class SSHClientGUI:
         main_frame = ttk.Frame(help_window)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         instructions = (
-            "MANUAL COMPLETO DO GERENCIADOR SSH AVANÇADO v1.2.12\n\n"
+            "MANUAL COMPLETO DO GERENCIADOR SSH AVANÇADO v1.2.13\n\n"
             "1. CONEXÃO SSH\n"
             "   - Preencha os campos de Host, Usuário, Senha e Porta\n"
             "   - Clique em 'Conectar' ou pressione Enter no campo de senha\n"
