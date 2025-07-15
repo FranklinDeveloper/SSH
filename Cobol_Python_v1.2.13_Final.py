@@ -69,6 +69,8 @@ class AutoUpdater:
     def __init__(self, gui_instance):
         self.gui = gui_instance
         self.current_version = SOFTWARE_VERSION
+        self.github_repo = "FranklinDeveloper/SSH"
+        self.releases_url = f"https://api.github.com/repos/{self.github_repo}/releases/latest"
         self.update_in_progress = False
 
     def get_github_data(self, url):
@@ -159,6 +161,8 @@ class AutoUpdater:
                 bat_file.write(f'copy "{current_exe}" "{current_exe}.bak" > nul\n')
                 # Substituir o executável
                 bat_file.write(f'move /Y "{temp_file}" "{current_exe}" > nul\n')
+                # Iniciar o novo executável
+                bat_file.write(f'start "" /B "{current_exe}"\n')  # Modificado: /B para evitar nova janela
                 # Excluir o script
                 bat_file.write(f'del "%~f0"\n')
             
@@ -176,6 +180,114 @@ class AutoUpdater:
         except Exception as e:
             logger.error(f"Erro na aplicação da atualização: {str(e)}")
             return False
+
+    def check_and_apply_update(self):
+        """Executa todo o processo de atualização"""
+        if self.update_in_progress:
+            return
+            
+        self.update_in_progress = True
+        self.gui.update_status("Verificando atualizações...", "progress")
+        
+        # Obtém informações da última release
+        release_data = self.get_github_data(self.releases_url)
+        if not release_data:
+            self.gui.update_status("Falha ao verificar atualizações", "error")
+            self.update_in_progress = False
+            return
+        
+        # Verifica se há atualização disponível
+        latest_version = release_data.get('tag_name', '').lstrip('v')
+        if not latest_version:
+            self.gui.update_status("Versão não encontrada", "error")
+            self.update_in_progress = False
+            return
+            
+        if version.parse(latest_version) <= version.parse(self.current_version):
+            self.gui.update_status("Você já tem a versão mais recente", "success")
+            self.update_in_progress = False
+            return
+        
+        self.gui.update_status(f"Nova versão encontrada: {latest_version}", "progress")
+        
+        # Encontra o asset correto para download
+        asset = None
+        hash_asset = None
+        
+        for a in release_data["assets"]:
+            if a["name"].startswith("GerenciadorSSH") and a["name"].endswith(".exe"):
+                asset = a
+                # Procurar pelo arquivo de hash correspondente
+                hash_name = a["name"] + ".sha256"
+                for ha in release_data["assets"]:
+                    if ha["name"] == hash_name:
+                        hash_asset = ha
+                        break
+                if hash_asset:
+                    break
+        
+        if not asset:
+            self.gui.update_status("Nenhum asset compatível encontrado", "error")
+            self.update_in_progress = False
+            return
+        
+        if not hash_asset:
+            self.gui.update_status("Hash de verificação não encontrado", "error")
+            self.update_in_progress = False
+            return
+        
+        # Cria diretório temporário
+        temp_dir = tempfile.mkdtemp()
+        exe_path = os.path.join(temp_dir, asset["name"])
+        hash_path = os.path.join(temp_dir, hash_asset["name"])
+        
+        # Baixa o executável
+        self.gui.update_status(f"Baixando {asset['name']}...", "progress")
+        if not self.download_asset(asset["browser_download_url"], exe_path):
+            self.gui.update_status("Falha no download da atualização", "error")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            self.update_in_progress = False
+            return
+        
+        # Baixa o hash
+        self.gui.update_status("Baixando verificação de integridade...", "progress")
+        if not self.download_asset(hash_asset["browser_download_url"], hash_path):
+            self.gui.update_status("Falha ao baixar verificação de integridade", "error")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            self.update_in_progress = False
+            return
+        
+        # Lê o hash esperado
+        try:
+            with open(hash_path, 'r') as f:
+                expected_hash = f.read().strip()
+        except Exception as e:
+            self.gui.update_status(f"Erro ao ler hash: {str(e)}", "error")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            self.update_in_progress = False
+            return
+        
+        # Verifica integridade
+        self.gui.update_status("Verificando integridade do arquivo...", "progress")
+        if not self.verify_file_integrity(exe_path, expected_hash):
+            self.gui.update_status("Falha na verificação de integridade!", "error")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            self.update_in_progress = False
+            return
+        
+        # Aplica a atualização
+        self.gui.update_status("Aplicando atualização...", "progress")
+        if self.apply_update(exe_path):
+            self.gui.update_status("Atualização aplicada com sucesso! Reiniciando...", "success")
+            # Fechar todas as janelas antes de sair
+            if self.gui.root:
+                self.gui.root.destroy()
+            sys.exit(0)  # Saída limpa
+        else:
+            self.gui.update_status("Falha ao aplicar a atualização", "error")
+        
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        self.update_in_progress = False
 
 class InteractiveHostKeyPolicy(paramiko.MissingHostKeyPolicy):
     """Política interativa para verificação de host keys"""
@@ -279,6 +391,7 @@ class SSHClientGUI:
         self.all_processes = []
         self.host_history = []
         self.admin_config_file = os.path.join(os.path.expanduser("~"), ".ssh_tool_config")
+        self.DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/FranklinDeveloper/SSH/main/version.json"
         self.admin_config = self.load_admin_config()
         self.permanent_filter = {
             'users': self.admin_config.get('permanent_filter_users', DEFAULT_FILTER_USERS),
@@ -697,6 +810,12 @@ class SSHClientGUI:
         )
         whatsapp_label.pack(side=tk.LEFT, padx=(0,5))
         whatsapp_label.bind("<Button-1>", lambda e: webbrowser.open("https://wa.me/5531993639500"))
+        update_btn = ttk.Button(
+            footer_frame, 
+            text="Verificar Atualizações",
+            command=self.check_for_updates
+        )
+        update_btn.pack(side=tk.RIGHT, padx=5)
         root.protocol("WM_DELETE_WINDOW", self.safe_close)
 
         self.capturing_matricula = False
@@ -704,51 +823,6 @@ class SSHClientGUI:
         self.capturing_tela = False
         self.tela_output = ""
         self.setup_treeview_bindings()
-        
-        # Verificar se há uma versão anterior em execução
-        self.check_and_kill_old_versions()
-
-    def check_and_kill_old_versions(self):
-        """Encerra versões anteriores do aplicativo"""
-        current_pid = os.getpid()
-        current_exe = os.path.basename(sys.executable).lower()
-        
-        try:
-            # Listar todos os processos
-            if sys.platform.startswith('win'):
-                cmd = 'tasklist /FO CSV /NH'
-                output = subprocess.check_output(cmd, shell=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                processes = [line.split(',')[0].strip('"') for line in output.splitlines() if line.strip()]
-            else:
-                cmd = 'ps -eo comm='
-                output = subprocess.check_output(cmd, shell=True, text=True)
-                processes = output.splitlines()
-            
-            # Filtra processos com mesmo nome mas PID diferente
-            for proc_name in processes:
-                if proc_name.lower() == current_exe:
-                    try:
-                        # Obter PID do processo
-                        if sys.platform.startswith('win'):
-                            cmd = f'tasklist /FI "IMAGENAME eq {proc_name}" /FO CSV /NH'
-                            out = subprocess.check_output(cmd, shell=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                            for line in out.splitlines():
-                                parts = line.split(',')
-                                if len(parts) >= 2:
-                                    pid = int(parts[1].strip('"'))
-                                    if pid != current_pid:
-                                        os.kill(pid, 9)
-                        else:
-                            cmd = f'pgrep -f "{proc_name}"'
-                            out = subprocess.check_output(cmd, shell=True, text=True)
-                            for pid in out.split():
-                                pid = int(pid)
-                                if pid != current_pid:
-                                    os.kill(pid, 9)
-                    except Exception:
-                        pass
-        except Exception as e:
-            logger.error(f"Erro ao verificar processos antigos: {str(e)}")
 
     def setup_treeview_bindings(self):
         """Configura atalhos de teclado para as treeviews"""
@@ -781,6 +855,11 @@ class SSHClientGUI:
         # Atualiza o log
         logger.info(f"[STATUS] {message}")
 
+    def check_for_updates(self):
+        """Inicia a verificação de atualizações em segundo plano"""
+        self.update_status("Verificando atualizações...", "progress")
+        threading.Thread(target=self.updater.check_and_apply_update, daemon=True).start()
+
     @classmethod
     def generate_salt(cls):
         hostname = socket.gethostname().encode()
@@ -788,8 +867,13 @@ class SSHClientGUI:
 
     @staticmethod
     def get_master_key():
-        # Geração segura de chave
-        return os.urandom(32)  # 256 bits de entropia
+        parts = [
+            "c0mpl3xP@ss_",
+            "w1thS0m3R@nd0m",
+            "5tringAndNumb3rs",
+            "!@#$%^&*()"
+        ]
+        return "".join(parts)
 
     @classmethod
     def derive_key(cls, salt=None):
@@ -802,7 +886,7 @@ class SSHClientGUI:
             iterations=100000,
             backend=default_backend
         )
-        return kdf.derive(cls.get_master_key())
+        return kdf.derive(cls.get_master_key().encode())
 
     @classmethod
     def encrypt_data(cls, plaintext):
@@ -812,12 +896,14 @@ class SSHClientGUI:
             aes_key = key[:32]
             hmac_key = key[32:]
             iv = os.urandom(16)
-            cipher = Cipher(algorithms.AES(aes_key), modes.GCM(iv), backend=default_backend())
+            cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
             encryptor = cipher.encryptor()
             padder = padding.PKCS7(128).padder()
             padded_data = padder.update(plaintext.encode()) + padder.finalize()
             ciphertext = encryptor.update(padded_data) + encryptor.finalize()
-            tag = encryptor.tag
+            h = hmac.HMAC(hmac_key, hashes.SHA256(), backend=default_backend())
+            h.update(iv + ciphertext)
+            tag = h.finalize()
             return base64.b64encode(salt + iv + ciphertext + tag).decode()
         except Exception as e:
             logger.error(f"Encryption error: {e}")
@@ -827,16 +913,24 @@ class SSHClientGUI:
     def decrypt_data(cls, ciphertext_b64):
         try:
             data = base64.b64decode(ciphertext_b64)
-            if len(data) < (16 + 16 + 16):  # salt (16) + iv (16) + tag (16)
+            if len(data) < (16 + 16 + 32):
                 logger.error("Decryption error: Data too short")
                 return ciphertext_b64
             salt = data[:16]
             iv = data[16:32]
-            ciphertext = data[32:-16]
-            tag = data[-16:]
+            ciphertext = data[32:-32]
+            tag = data[-32:]
             key = cls.derive_key(salt)
             aes_key = key[:32]
-            cipher = Cipher(algorithms.AES(aes_key), modes.GCM(iv, tag), backend=default_backend())
+            hmac_key = key[32:]
+            h = hmac.HMAC(hmac_key, hashes.SHA256(), backend=default_backend())
+            h.update(iv + ciphertext)
+            try:
+                h.verify(tag)
+            except (InvalidTag, InvalidSignature) as e:
+                logger.error(f"HMAC verification failed: {e}")
+                return ciphertext_b64
+            cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
             decryptor = cipher.decryptor()
             padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
             unpadder = padding.PKCS7(128).unpadder()
@@ -851,9 +945,12 @@ class SSHClientGUI:
             return ciphertext_b64
 
     def load_admin_config(self):
+        MASTER_PASSWORD = "Carro@#356074"
+        master_password_hash = hashlib.sha256(MASTER_PASSWORD.encode()).hexdigest()
         default_config = {
             'admin_password': self.encrypt_data('admin'),
-            'update_url': "",
+            'master_password_hash': master_password_hash,
+            'update_url': self.DEFAULT_UPDATE_URL,
             'permanent_filter_users': DEFAULT_FILTER_USERS,
             'permanent_filter_commands': DEFAULT_FILTER_COMMANDS
         }
@@ -1024,16 +1121,15 @@ class SSHClientGUI:
                 else:
                     messagebox.showerror(
                         "Erro",
-                        "Senha incorreta!",
+                        "Senha incorreta! A senha padrão é 'admin'. "
+                        "Se você a alterou e esqueceu, clique em 'Esqueci a senha'.",
                         parent=top
                     )
                     senha_entry.focus_set()
             elif admin_type == "master":
-                stored_admin_pass = self.admin_config.get('admin_password', 'admin')
-                if stored_admin_pass != 'admin' and re.match(r'^[A-Za-z0-9+/]+={0,2}$', stored_admin_pass):
-                    stored_admin_pass = self.decrypt_data(stored_admin_pass) or 'admin'
-                
-                if password == stored_admin_pass:
+                stored_hash = self.admin_config.get('master_password_hash')
+                input_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()  # CORREÇÃO AQUI
+                if stored_hash and input_hash == stored_hash:
                     auth_frame.pack_forget()
                     type_frame.pack_forget()
                     master_config_frame.pack(fill=tk.BOTH, expand=True)
@@ -1050,7 +1146,7 @@ class SSHClientGUI:
             config_path = os.path.abspath(self.admin_config_file)
             messagebox.showinfo(
                 "Esqueci a senha",
-                f"Para redefinir as senhas, exclua ou edite o arquivo de configuração:\n\n{config_path}\n\n" +
+                f"Para redefinir as senhas, exclua ou edite o arquivo de configuração:\n\n{config_path}\n\n"
                 "Após excluir, as senhas voltarão aos valores padrão (admin para administrador normal).",
                 parent=self.root
             )
@@ -1099,7 +1195,7 @@ class SSHClientGUI:
         url_frame = ttk.LabelFrame(master_config_frame, text="URL de Atualização")
         url_frame.pack(fill=tk.X, pady=5)
         ttk.Label(url_frame, text="Endpoint para verificar atualizações:").pack(anchor=tk.W, padx=5, pady=(2,0))
-        update_url_var = tk.StringVar(value=self.admin_config.get('update_url', ""))
+        update_url_var = tk.StringVar(value=self.admin_config.get('update_url', self.DEFAULT_UPDATE_URL))
         update_url_entry = ttk.Entry(url_frame, textvariable=update_url_var, width=50)
         update_url_entry.pack(fill=tk.X, padx=5, pady=2)
         admin_pass_frame = ttk.LabelFrame(master_config_frame, text="Senha do Administrador")
@@ -1108,38 +1204,48 @@ class SSHClientGUI:
         new_admin_pass_var = tk.StringVar()
         new_admin_pass_entry = ttk.Entry(admin_pass_frame, textvariable=new_admin_pass_var, show="*", width=15)
         new_admin_pass_entry.pack(side=tk.LEFT, padx=(0,5))
+        master_pass_frame = ttk.LabelFrame(master_config_frame, text="Senha Master")
+        master_pass_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(master_pass_frame, text="Nova senha master:").pack(side=tk.LEFT, padx=(5,2))
+        new_master_pass_var = tk.StringVar()
+        new_master_pass_entry = ttk.Entry(master_pass_frame, textvariable=new_master_pass_var, show="*", width=15)
+        new_master_pass_entry.pack(side=tk.LEFT, padx=(0,5))
         master_btn_frame = ttk.Frame(master_config_frame)
         master_btn_frame.pack(fill=tk.X, pady=10)
         
         def save_master_config():
             new_admin_pass = new_admin_pass_var.get().strip()
+            new_master_pass = new_master_pass_var.get().strip()
             if new_admin_pass:
                 self.admin_config['admin_password'] = new_admin_pass
+            if new_master_pass:
+                self.admin_config['master_password_hash'] = hashlib.sha256(new_master_pass.encode()).hexdigest()
             self.admin_config['update_url'] = update_url_var.get().strip()
             if self.save_admin_config(self.admin_config):
-                messagebox.showinfo(
-                    "Sucesso", 
-                    "Configuração master salva com sucesso!",
-                    parent=top
-                )
+                messagebox.showinfo("Sucesso", "Configuração master salva com sucesso!", parent=top)
                 top.destroy()
             else:
                 messagebox.showerror("Erro", "Falha ao salvar configuração!", parent=top)
         
         save_btn = ttk.Button(master_btn_frame, text="Salvar Configuração", command=save_master_config, style='Green.TButton')
         save_btn.pack(side=tk.LEFT, padx=5)
-
-        # NOVO BOTÃO: Gerar Executável
-        generate_btn = ttk.Button(
+        generate_exe_btn = ttk.Button(
             master_btn_frame, 
             text="Gerar Executável",
-            command=self.generate_executable,
-            width=15
+            command=self.generate_executável,
+            style='Green.TButton',
+            width=14
         )
-        generate_btn.pack(side=tk.LEFT, padx=5)
-        
+        generate_exe_btn.pack(side=tk.LEFT, padx=5)
         cancel_btn = ttk.Button(master_btn_frame, text="Cancelar", command=top.destroy)
         cancel_btn.pack(side=tk.LEFT)
+        self.progress_frame = ttk.Frame(master_config_frame)
+        self.progress_frame.pack(fill=tk.X, pady=5, padx=5)
+        self.progress_label = ttk.Label(self.progress_frame, text="", anchor=tk.W)
+        self.progress_label.pack(fill=tk.X, pady=(0,2))
+        self.progress_bar = ttk.Progressbar(self.progress_frame, mode='determinate', length=380)
+        self.progress_bar.pack(fill=tk.X, pady=(0,5))
+        self.progress_frame.pack_forget()
         top.update_idletasks()
         width = top.winfo_width()
         height = top.winfo_height()
@@ -1156,93 +1262,326 @@ class SSHClientGUI:
         update_auth_ui()
         admin_type_var.trace_add("write", lambda *args: update_auth_ui())
 
-    # NOVA FUNÇÃO: Gerar executável
-    def generate_executable(self):
-        """Gera um executável temporário e pergunta onde salvar"""
+    def update_progress(self, value, message):
+        if self.admin_dialog and self.admin_dialog.winfo_exists():
+            self.progress_bar['value'] = value
+            self.progress_label.config(text=message)
+            self.admin_dialog.update()
+
+    def generate_executável(self):
+        self.progress_frame.pack(fill=tk.X, pady=5, padx=5)
+        self.update_progress(0, "Preparando para gerar executável...")
+        threading.Thread(target=self._generate_executável_thread, daemon=True).start()
+
+    def _generate_executável_thread(self):
+        temp_script_path = None
         try:
-            # Verificar se está rodando como script Python
-            if getattr(sys, 'frozen', False):
-                messagebox.showinfo(
-                    "Informação", 
-                    "Você já está executando uma versão empacotada.",
-                    parent=self.root
-                )
-                return
+            # Desabilitar botão durante a compilação
+            self.root.after(0, lambda: self.generate_exe_btn.config(state=tk.DISABLED))
             
-            # Criar um arquivo temporário
-            temp_exe = tempfile.NamedTemporaryFile(
-                suffix='.exe', 
-                delete=False,
-                prefix='SSHClient_'
-            )
-            temp_path = temp_exe.name
-            temp_exe.close()
+            # Configurar diretórios temporários
+            self.update_progress(0, "Criando ambiente temporário...")
+            temp_dir = tempfile.mkdtemp()
+            build_dir = os.path.join(temp_dir, "build")
+            dist_dir = os.path.join(temp_dir, "dist")
+            os.makedirs(build_dir, exist_ok=True)
+            os.makedirs(dist_dir, exist_ok=True)
+
+            # Criar script temporário
+            self.update_progress(10, "Gerando script com filtros atualizados...")
+            temp_script_path = self.create_temp_script_with_filters()
             
-            # Atualizar status
-            self.update_status("Gerando executável temporário...", "progress")
+            # Verificar e instalar PyInstaller se necessário
+            self.update_progress(20, "Verificando dependências...")
+            try:
+                import PyInstaller
+            except ImportError:
+                self.update_progress(30, "Instalando PyInstaller...")
+                subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"], check=True)
             
-            # Comando para gerar o executável
-            script_path = os.path.abspath(__file__)
+            # Configurar ícone
+            icon_path = self.find_application_icon()
+            if not icon_path:
+                # Tentar converter PNG para ICO se necessário
+                png_path = self.find_png_icon()
+                if png_path:
+                    icon_path = self.convert_png_to_ico(png_path, temp_dir)
+            
+            # Configurar comando de compilação
+            self.update_progress(40, "Preparando parâmetros de compilação...")
             cmd = [
                 sys.executable,
                 "-m",
                 "PyInstaller",
                 "--onefile",
                 "--windowed",
-                "--name=SSHClient",
-                f"--distpath={os.path.dirname(temp_path)}",
-                f"--workpath={tempfile.gettempdir()}",
-                f"--specpath={tempfile.gettempdir()}",
-                script_path
+                "--clean",
+                f"--name=GerenciadorSSH_{SOFTWARE_VERSION}",
+                "--distpath", dist_dir,
+                "--workpath", build_dir,
+                "--specpath", temp_dir,
+                "--noupx",
+                "--add-data", f"{temp_script_path};.",
+                temp_script_path
             ]
             
-            # Executar o comando
+            if icon_path:
+                cmd.extend(["--icon", icon_path])
+            
+            # Adicionar recursos adicionais - BUSCA ROBUSTA DO LOGO
+            data_files = []
+            base_paths = [
+                os.path.dirname(os.path.abspath(__file__)),
+                os.getcwd(),
+                os.path.expanduser("~"),
+                os.path.join(os.path.expanduser("~"), "Documents"),
+                os.path.join(os.path.expanduser("~"), "Desktop"),
+                "C:\\",
+                "D:\\"
+            ]
+            
+            for base_path in base_paths:
+                candidate = os.path.join(base_path, "logoicogrupoprofarma.png")
+                if os.path.exists(candidate):
+                    data_files.append(candidate)
+                    break
+            
+            # Copiar arquivos para o diretório temporário
+            for data_file in data_files:
+                shutil.copy(data_file, temp_dir)
+                cmd.append(f"--add-data={os.path.basename(data_file)};.")
+            
+            # Executar compilação
+            self.update_progress(50, "Iniciando compilação (pode levar alguns minutos)...")
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                cwd=temp_dir,
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
-            stdout, stderr = process.communicate()
             
-            if process.returncode != 0:
-                error_msg = f"Falha na geração: {stderr.decode(errors='ignore')}"
-                logger.error(error_msg)
-                messagebox.showerror(
-                    "Erro", 
-                    f"Falha ao gerar executável:\n{error_msg}",
-                    parent=self.root
-                )
-                return
+            # Monitorar saída em tempo real
+            output_lines = []
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    output_lines.append(line)
+                    # Atualizar progresso baseado em palavras-chave
+                    if "Analyzing" in line:
+                        self.update_progress(60, "Analisando dependências...")
+                    elif "Processing" in line:
+                        self.update_progress(70, "Processando módulos...")
+                    elif "Building" in line:
+                        self.update_progress(80, "Construindo executável...")
+                    elif "Writing" in line:
+                        self.update_progress(90, "Gerando arquivo final...")
             
-            # Perguntar onde salvar
-            save_path = filedialog.asksaveasfilename(
-                defaultextension=".exe",
-                filetypes=[("Executável", "*.exe")],
-                title="Salvar executável como"
-            )
-            
-            if not save_path:
-                os.unlink(temp_path)
-                return
-            
-            # Mover o arquivo temporário para o destino
-            shutil.move(temp_path, save_path)
-            
-            self.update_status(f"Executável gerado: {save_path}", "success")
-            messagebox.showinfo(
-                "Sucesso", 
-                f"Executável gerado com sucesso em:\n{save_path}",
-                parent=self.root
-            )
-            
+            # Verificar resultado
+            returncode = process.poll()
+            if returncode == 0:
+                # Encontrar executável gerado
+                exe_name = f"GerenciadorSSH_{SOFTWARE_VERSION}.exe"
+                exe_path = os.path.join(dist_dir, exe_name)
+                
+                # Verificação adicional caso o nome seja diferente
+                if not os.path.exists(exe_path):
+                    exe_files = glob.glob(os.path.join(dist_dir, '*.exe'))
+                    if exe_files:
+                        exe_path = exe_files[0]
+                
+                if os.path.exists(exe_path):
+                    # GERAR VERSION.JSON E SHA256
+                    self.update_progress(95, "Gerando arquivos de versão e verificação...")
+                    
+                    # Criar version.json
+                    version_data = {
+                        "version": SOFTWARE_VERSION,
+                        "release_date": datetime.now().strftime("%Y-%m-%d"),
+                        "download_url": f"https://github.com/{self.updater.github_repo}/releases/download/v{SOFTWARE_VERSION}/{os.path.basename(exe_path)}"
+                    }
+                    version_path = os.path.join(dist_dir, "version.json")
+                    with open(version_path, 'w') as vf:
+                        json.dump(version_data, vf, indent=2)
+                    
+                    # Calcular SHA256 do executável
+                    sha256_hash = self.calculate_sha256(exe_path)
+                    sha256_path = exe_path + ".sha256"
+                    with open(sha256_path, 'w') as sf:
+                        sf.write(sha256_hash)
+                    
+                    # Criar README.md básico
+                    readme_path = os.path.join(dist_dir, "README.md")
+                    with open(readme_path, 'w') as rf:
+                        rf.write(f"# Gerenciador SSH Avançado v{SOFTWARE_VERSION}\n\n")
+                        rf.write("Ferramenta para gerenciamento de conexões SSH e processos remotos.\n\n")
+                        rf.write("## Como usar\n")
+                        rf.write("1. Execute o arquivo `GerenciadorSSH_{SOFTWARE_VERSION}.exe`\n")
+                        rf.write("2. Preencha os dados de conexão SSH\n")
+                        rf.write("3. Utilize as diversas funcionalidades disponíveis nas abas\n\n")
+                        rf.write(f"**SHA256 Checksum**: `{sha256_hash}`\n")
+                    
+                    # Abrir diálogo para salvar
+                    self.root.after(0, self.save_executável_dialog, exe_path, version_path, sha256_path, readme_path)
+                else:
+                    self.update_progress(100, "Atenção: Compilação concluída mas executável não encontrado")
+                    error_log_path = os.path.join(temp_dir, "erro_compilacao.log")
+                    with open(error_log_path, 'w', encoding='utf-8') as f:
+                        f.writelines(output_lines)
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Erro na Compilação", 
+                        "Executável não encontrado após compilação. "
+                        f"Verifique o log em: {error_log_path}"
+                    ))
+            else:
+                # Salvar log de erro
+                error_log_path = os.path.join(temp_dir, "erro_compilacao.log")
+                with open(error_log_path, 'w', encoding='utf-8') as f:
+                    f.writelines(output_lines)
+                self.update_progress(100, f"Erro na compilação (código {returncode})\nLog salvo em: {error_log_path}")
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Erro na Compilação", 
+                    f"Falha na compilação (código {returncode}). "
+                    f"Verifique o log em: {error_log_path}"
+                ))
+                
         except Exception as e:
-            logger.error(f"Erro ao gerar executável: {str(e)}")
-            messagebox.showerror(
-                "Erro", 
-                f"Erro ao gerar executável:\n{str(e)}",
-                parent=self.root
-            )
+            error_msg = f"Falha crítica: {str(e)}\n\n{traceback.format_exc()}"
+            self.update_progress(100, error_msg)
+            self.root.after(0, lambda: messagebox.showerror(
+                "Erro na Compilação", 
+                f"Erro inesperado: {str(e)}\n\nVerifique os logs para mais detalhes."
+            ))
+        finally:
+            # Reabilitar botão após operação
+            self.root.after(0, lambda: self.generate_exe_btn.config(state=tk.NORMAL))
+            
+            # Limpeza final
+            try:
+                if temp_script_path and os.path.exists(temp_script_path):
+                    os.unlink(temp_script_path)
+            except Exception:
+                pass
+
+    def calculate_sha256(self, file_path):
+        """Calcula o hash SHA256 de um arquivo"""
+        sha256 = hashlib.sha256()
+        with open(file_path, 'rb') as f:
+            while chunk := f.read(8192):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+
+    def save_executável_dialog(self, source_exe, version_path, sha256_path, readme_path):
+        # Fechar o frame de progresso antes de abrir o diálogo
+        if hasattr(self, 'progress_frame') and self.progress_frame.winfo_ismapped():
+            self.progress_frame.pack_forget()
+            
+        dest_dir = filedialog.askdirectory(
+            title="Selecione a pasta para salvar os arquivos"
+        )
+        
+        if dest_dir:
+            try:
+                # Copiar executável
+                exe_name = os.path.basename(source_exe)
+                dest_exe = os.path.join(dest_dir, exe_name)
+                shutil.copy(source_exe, dest_exe)
+                
+                # Copiar version.json
+                shutil.copy(version_path, os.path.join(dest_dir, "version.json"))
+                
+                # Copiar SHA256
+                sha256_name = os.path.basename(sha256_path)
+                dest_sha256 = os.path.join(dest_dir, sha256_name)
+                shutil.copy(sha256_path, dest_sha256)
+                
+                # Copiar README.md
+                shutil.copy(readme_path, os.path.join(dest_dir, "README.md"))
+                
+                messagebox.showinfo(
+                    "Sucesso", 
+                    f"Arquivos gerados com sucesso em:\n{dest_dir}\n\n"
+                    f"• Executável: {exe_name}\n"
+                    f"• version.json\n"
+                    f"• {sha256_name}\n"
+                    f"• README.md\n\n"
+                    "Subir todos os arquivos para o GitHub na nova release."
+                )
+            except Exception as e:
+                messagebox.showerror("Erro", f"Erro ao salvar arquivos: {str(e)}")
+        else:
+            messagebox.showinfo("Informação", "Operação cancelada pelo usuário.")
+
+    def convert_png_to_ico(self, png_path, output_dir):
+        try:
+            from PIL import Image
+            img = Image.open(png_path)
+            ico_path = os.path.join(output_dir, "temp_icon.ico")
+            img.save(ico_path, format='ICO', sizes=[(16,16), (32,32), (48,48), (64,64)])
+            return ico_path
+        except Exception as e:
+            logger.error(f"Erro ao converter PNG para ICO: {str(e)}")
+            return None
+
+    def create_temp_script_with_filters(self):
+        """Cria um script temporário com os filtros atualizados"""
+        current_script = os.path.abspath(__file__)
+        with open(current_script, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        new_lines = []
+        skip_until_end = False  # Flag para pular linhas até o fim da lista
+        skip_section = None     # Qual seção está sendo pulada
+        
+        for line in lines:
+            stripped_line = line.strip()
+            
+            # Verificar se estamos em uma seção que precisa ser substituída
+            if stripped_line.startswith('DEFAULT_FILTER_USERS ='):
+                skip_until_end = True
+                skip_section = 'users'
+                users = self.admin_config.get('permanent_filter_users', DEFAULT_FILTER_USERS)
+                new_lines.append("DEFAULT_FILTER_USERS = [\n")
+                for user in users:
+                    new_lines.append(f"    '{user}',\n")
+                new_lines.append("]\n")
+                continue
+            
+            elif stripped_line.startswith('DEFAULT_FILTER_COMMANDS ='):
+                skip_until_end = True
+                skip_section = 'commands'
+                commands = self.admin_config.get('permanent_filter_commands', DEFAULT_FILTER_COMMANDS)
+                new_lines.append("DEFAULT_FILTER_COMMANDS = [\n")
+                for cmd in commands:
+                    new_lines.append(f"    '{cmd}',\n")
+                new_lines.append("]\n")
+                continue
+            
+            # Pular linhas até encontrar o fechamento da lista original
+            if skip_until_end:
+                if skip_section == 'users' and ']' in line:
+                    skip_until_end = False
+                    skip_section = None
+                elif skip_section == 'commands' and ']' in line:
+                    skip_until_end = False
+                    skip_section = None
+                continue  # Pular todas as linhas até o fechamento
+            
+            # Adicionar versão atualizada
+            if stripped_line.startswith('SOFTWARE_VERSION ='):
+                new_lines.append(f'SOFTWARE_VERSION = "{SOFTWARE_VERSION}"\n')
+            else:
+                new_lines.append(line)
+        
+        # Escrever script temporário
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.py', delete=False) as temp_script:
+            temp_script.writelines(new_lines)
+            return temp_script.name
 
     def is_caps_lock_on(self):
         if sys.platform.startswith('win'):
@@ -1275,9 +1614,6 @@ class SSHClientGUI:
             self.caps_lock_warning_shown = False
 
     def safe_close(self):
-        if not self.running:  # Já está fechando?
-            return
-            
         self.running = False
         self.disconnect()
         if self.temp_ico_file and os.path.exists(self.temp_ico_file):
@@ -1286,9 +1622,6 @@ class SSHClientGUI:
             except Exception:
                 pass
         self.root.destroy()
-        # Forçar encerramento do processo para evitar múltiplas instâncias
-        if IS_EXE:
-            os._exit(0)
 
     def show_help(self):
         help_window = tk.Toplevel(self.root)
@@ -1300,7 +1633,7 @@ class SSHClientGUI:
         main_frame = ttk.Frame(help_window)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         instructions = (
-            "MANUAL COMPLETO DO GERENCIADOR SSH AVANÇADO v1.2.13\n\n"
+            "MANUAL COMPLETO DO GERENCIADOR SSH AVANÇADO v1.2.10\n\n"
             "1. CONEXÃO SSH\n"
             "   - Preencha os campos de Host, Usuário, Senha e Porta\n"
             "   - Clique em 'Conectar' ou pressione Enter no campo de senha\n"
@@ -1345,10 +1678,28 @@ class SSHClientGUI:
             "   - Filtros permanentes padrão:\n"
             "        Usuários bloqueados: root, zabbix, sshd, postfix, nscd, message+, usertra+, prod, fatura, logist, lp\n"
             "        Comandos bloqueados: (sd-pam), -bash, /opt/microfocu, /opt/microfocus, /usr/lib/system, bash, pg /d/work/est2, ps aux, sh /app/scripts, sh /usr/bin/cha, /usr/lib/ssh/sf\n\n"
-            "8. SEGURANÇA\n"
+            "8. SISTEMA DE AUTO-ATUALIZAÇÃO\n"
+            "   - Botão 'Verificar Atualizações' no rodapé\n"
+            "   - Verificação automática na inicialização\n"
+            "   - Processo seguro com verificação de integridade SHA256\n"
+            "   - Download em segundo plano com feedback de progresso\n"
+            "   - Reinício automático após atualização\n\n"
+            "9. GERAÇÃO DE EXECUTÁVEL\n"
+            "   - Disponível para administradores master\n"
+            "   - Gera versão .exe do aplicativo\n"
+            "   - Barra de progresso mostra andamento real\n"
+            "   - Pode levar alguns minutos para completar\n\n"
+            "10. DICAS AVANÇADAS\n"
+            "   - Pressione Enter em campos de texto para ativar ações\n"
+            "   - Clique nos cabeçalhos das tabelas para ordenar\n"
+            "   - Use o botão \U0001F441 para mostrar/ocultar senha\n"
+            "   - Para selecionar todos os PIDs em uma tabela: Ctrl+A\n"
+            "   - Para limpar seleção: clique em área vazia da tabela\n\n"
+            "11. SEGURANÇA\n"
             "   - Host keys são verificadas e armazenadas\n"
             "   - Senhas administrativas são criptografadas\n"
-            "   - Conexões usam protocolo SSH seguro\n\n"
+            "   - Conexões usam protocolo SSH seguro\n"
+            "   - Auto-atualizações verificadas com SHA256\n\n"
             "CONTATO E SUPORTE:\n"
             "   WhatsApp: 31 99363-9500\n"
             "   LinkedIn: https://www.linkedin.com/in/franklintadeu/\n\n"
@@ -1993,7 +2344,7 @@ class SSHClientGUI:
             return
         confirm_message = (
             f"Tem certeza que deseja derrubar {len(pids)} processo(s)?\n\n"
-            f"PIDs: {', '.join(pids)}\n\n"
+            f"PIDs: { ', '.join(pids)}\n\n"
             "Esta operação usará o menu interativo do sistema."
         )
         confirm = messagebox.askyesno("Confirmar Operação", confirm_message)
