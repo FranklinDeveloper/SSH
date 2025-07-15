@@ -1,8 +1,7 @@
-# Gerenciador SSH Avan�ado v1.2.13
+# Gerenciador SSH Avançado v1.2.13
 
-<<<<<<< HEAD
-Ferramenta para gerenciamento de conex�es SSH e processos remotos.
-=======
+Ferramenta para gerenciamento de conexões SSH e processos remotos.
+
 Ferramenta com interface gráfica para administração remota de sistemas Cobol via SSH.
 
 ## Histórico de Versões
@@ -85,16 +84,12 @@ Ferramenta com interface gráfica para administração remota de sistemas Cobol 
 - **Criptografia AES-256 + HMAC** para senhas administrativas
 - **Duplo nível de acesso**: Admin e Admin Master
 - **Política de host keys** com opção de armazenamento permanente
->>>>>>> 73b06fb1e3e4325beb76f1e8d5f8f0e0f26f7036
 
 ## Como usar
 1. Execute o arquivo `GerenciadorSSH_{SOFTWARE_VERSION}.exe`
-2. Preencha os dados de conex�o SSH
-3. Utilize as diversas funcionalidades dispon�veis nas abas
+2. Preencha os dados de conexão SSH
+3. Utilize as diversas funcionalidades disponoveis nas abas
 
-<<<<<<< HEAD
-**SHA256 Checksum**: `3a57c0d2540d9e80915b2fdcfa1a1c4ccfbc1579a9aae3b8f1682d6e944938fa`
-=======
 ### Conexão Básica
 1. Preencha host, usuário, senha e porta
 2. Clique em "Conectar" ou pressione Enter
@@ -121,11 +116,10 @@ Ferramenta com interface gráfica para administração remota de sistemas Cobol 
 ### Fluxo de Atualização do Cliente
 ```mermaid
 graph TD
-    A[Cliente v1.2.12] --> B{Verifica GitHub}
+    A[Cliente v1.2.13] --> B{Verifica GitHub}
     B -->|Nova versão| C[Baixa executável]
     B -->|Mesma versão| D[Operação normal]
     C --> E[Valida SHA256]
     E -->|Sucesso| F[Substitui executável]
     E -->|Falha| G[Aborta atualização]
     F --> H[Reinicia aplicação]
->>>>>>> 73b06fb1e3e4325beb76f1e8d5f8f0e0f26f7036
