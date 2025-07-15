@@ -1,32 +1,54 @@
 # SSH_Avancado_Cobol
 
+readme_content = """# SSH_Avancado_Cobol
+
 Ferramenta com interface gráfica para administração remota de sistemas Cobol via SSH.
 
 ## Histórico de Versões
 
+- **1.2.13** (15/07/2025)  
+  - Verificação reforçada do caminho do executável após a compilação  
+  - Busca alternativa por qualquer arquivo `.exe` na pasta `dist`  
+  - Mensagens de erro detalhadas com caminho do log de erros  
+  - Geração de log de compilação para diagnóstico  
+  - Desabilitação do botão "Gerar Executável" durante o processo  
+  - Reabilitação do botão após conclusão (sucesso ou erro)  
+  - Prevenção contra cliques múltiplos durante a compilação  
+  - Lógica aprimorada para substituir os filtros padrão  
+  - Controle preciso das seções sendo substituídas  
+  - Tratamento correto de fechamento de listas  
+  - Diálogos de erro mais informativos  
+  - Barra de progresso mais precisa  
+  - Feedback visual durante todo o processo  
+  - Limpeza adequada de recursos temporários  
+  - Tratamento de exceções aprimorado  
+  - Verificação de dependências (PyInstaller)  
+  - Geração de checksum SHA256 para validação  
+  - Documentação automática (README.md)
+
 - **1.2.12** (10/07/2025)  
-  - **Sistema completo de atualização via GitHub** com verificação de releases
-  - **Geração automática de arquivos de versão/verificação** ao criar executável
-  - **Novos arquivos suportados**: `version.json`, `README.md` e `.sha256`
-  - **Validação reforçada** com checksum SHA256 para downloads
-  - **Melhorias na interface** de geração de executável
-  - **Correções de segurança** na política de host keys
+  - Sistema completo de atualização via GitHub com verificação de releases  
+  - Geração automática de arquivos de versão/verificação ao criar executável  
+  - Novos arquivos suportados: `version.json`, `README.md` e `.sha256`  
+  - Validação reforçada com checksum SHA256 para downloads  
+  - Melhorias na interface de geração de executável  
+  - Correções de segurança na política de host keys
 
 - **1.2.11** (07/07/2025)  
   - Correções de segurança na criptografia  
   - Melhoria no sistema de auto-atualização  
   - Otimização de desempenho na listagem de processos  
   - Correção de bugs na interface administrativa  
-  - Novos filtros padrão para comandos bloqueados  
+  - Novos filtros padrão para comandos bloqueados
 
 - **1.2.9**  
-  - **Sistema de autoatualização completo** com verificação de integridade via SHA256  
-  - **Geração de executável `.exe` personalizada** com filtros e ícone incluídos  
-  - **Interface aprimorada** com ícones, atalhos e feedback visual refinado  
-  - **Melhorias de segurança**: criptografia reforçada, verificação de host key interativa  
-  - **Ajuda integrada expandida** com manual completo e instruções detalhadas  
-  - **Melhorias na administração**: configuração de senhas, filtros e URL de atualização via interface  
-  - **Correções de bugs** e melhorias de estabilidade em todas as abas
+  - Sistema de autoatualização completo com verificação de integridade via SHA256  
+  - Geração de executável `.exe` personalizada com filtros e ícone incluídos  
+  - Interface aprimorada com ícones, atalhos e feedback visual refinado  
+  - Melhorias de segurança: criptografia reforçada, verificação de host key interativa  
+  - Ajuda integrada expandida com manual completo e instruções detalhadas  
+  - Melhorias na administração: configuração de senhas, filtros e URL de atualização via interface  
+  - Correções de bugs e melhorias de estabilidade em todas as abas
 
 ## Funcionalidades
 
