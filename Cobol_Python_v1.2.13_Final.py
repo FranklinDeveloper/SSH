@@ -159,8 +159,6 @@ class AutoUpdater:
                 bat_file.write(f'copy "{current_exe}" "{current_exe}.bak" > nul\n')
                 # Substituir o executável
                 bat_file.write(f'move /Y "{temp_file}" "{current_exe}" > nul\n')
-                # Iniciar o novo executável
-                bat_file.write(f'start "" /B "{current_exe}"\n')  # Modificado: /B para evitar nova janela
                 # Excluir o script
                 bat_file.write(f'del "%~f0"\n')
             
@@ -706,6 +704,51 @@ class SSHClientGUI:
         self.capturing_tela = False
         self.tela_output = ""
         self.setup_treeview_bindings()
+        
+        # Verificar se há uma versão anterior em execução
+        self.check_and_kill_old_versions()
+
+    def check_and_kill_old_versions(self):
+        """Encerra versões anteriores do aplicativo"""
+        current_pid = os.getpid()
+        current_exe = os.path.basename(sys.executable).lower()
+        
+        try:
+            # Listar todos os processos
+            if sys.platform.startswith('win'):
+                cmd = 'tasklist /FO CSV /NH'
+                output = subprocess.check_output(cmd, shell=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                processes = [line.split(',')[0].strip('"') for line in output.splitlines() if line.strip()]
+            else:
+                cmd = 'ps -eo comm='
+                output = subprocess.check_output(cmd, shell=True, text=True)
+                processes = output.splitlines()
+            
+            # Filtra processos com mesmo nome mas PID diferente
+            for proc_name in processes:
+                if proc_name.lower() == current_exe:
+                    try:
+                        # Obter PID do processo
+                        if sys.platform.startswith('win'):
+                            cmd = f'tasklist /FI "IMAGENAME eq {proc_name}" /FO CSV /NH'
+                            out = subprocess.check_output(cmd, shell=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                            for line in out.splitlines():
+                                parts = line.split(',')
+                                if len(parts) >= 2:
+                                    pid = int(parts[1].strip('"'))
+                                    if pid != current_pid:
+                                        os.kill(pid, 9)
+                        else:
+                            cmd = f'pgrep -f "{proc_name}"'
+                            out = subprocess.check_output(cmd, shell=True, text=True)
+                            for pid in out.split():
+                                pid = int(pid)
+                                if pid != current_pid:
+                                    os.kill(pid, 9)
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.error(f"Erro ao verificar processos antigos: {str(e)}")
 
     def setup_treeview_bindings(self):
         """Configura atalhos de teclado para as treeviews"""
@@ -1232,6 +1275,9 @@ class SSHClientGUI:
             self.caps_lock_warning_shown = False
 
     def safe_close(self):
+        if not self.running:  # Já está fechando?
+            return
+            
         self.running = False
         self.disconnect()
         if self.temp_ico_file and os.path.exists(self.temp_ico_file):
@@ -1240,6 +1286,9 @@ class SSHClientGUI:
             except Exception:
                 pass
         self.root.destroy()
+        # Forçar encerramento do processo para evitar múltiplas instâncias
+        if IS_EXE:
+            os._exit(0)
 
     def show_help(self):
         help_window = tk.Toplevel(self.root)
