@@ -1229,14 +1229,17 @@ class SSHClientGUI:
         
         save_btn = ttk.Button(master_btn_frame, text="Salvar Configuração", command=save_master_config, style='Green.TButton')
         save_btn.pack(side=tk.LEFT, padx=5)
-        generate_exe_btn = ttk.Button(
+        
+        # CORREÇÃO: Armazenar o botão como atributo da classe
+        self.generate_exe_btn = ttk.Button(
             master_btn_frame, 
             text="Gerar Executável",
             command=self.generate_executável,
             style='Green.TButton',
             width=14
         )
-        generate_exe_btn.pack(side=tk.LEFT, padx=5)
+        self.generate_exe_btn.pack(side=tk.LEFT, padx=5)
+        
         cancel_btn = ttk.Button(master_btn_frame, text="Cancelar", command=top.destroy)
         cancel_btn.pack(side=tk.LEFT)
         self.progress_frame = ttk.Frame(master_config_frame)
@@ -1271,14 +1274,15 @@ class SSHClientGUI:
     def generate_executável(self):
         self.progress_frame.pack(fill=tk.X, pady=5, padx=5)
         self.update_progress(0, "Preparando para gerar executável...")
+        
+        # CORREÇÃO: Desabilitar o botão antes de iniciar a thread
+        self.generate_exe_btn.config(state=tk.DISABLED)
+            
         threading.Thread(target=self._generate_executável_thread, daemon=True).start()
 
     def _generate_executável_thread(self):
         temp_script_path = None
         try:
-            # Desabilitar botão durante a compilação
-            self.root.after(0, lambda: self.generate_exe_btn.config(state=tk.DISABLED))
-            
             # Configurar diretórios temporários
             self.update_progress(0, "Criando ambiente temporário...")
             temp_dir = tempfile.mkdtemp()
@@ -1458,7 +1462,7 @@ class SSHClientGUI:
                 f"Erro inesperado: {str(e)}\n\nVerifique os logs para mais detalhes."
             ))
         finally:
-            # Reabilitar botão após operação
+            # CORREÇÃO: Reabilitar o botão após a operação
             self.root.after(0, lambda: self.generate_exe_btn.config(state=tk.NORMAL))
             
             # Limpeza final
@@ -2344,7 +2348,7 @@ class SSHClientGUI:
             return
         confirm_message = (
             f"Tem certeza que deseja derrubar {len(pids)} processo(s)?\n\n"
-            f"PIDs: { ', '.join(pids)}\n\n"
+            f"PIDs: {', '.join(pids)}\n\n"
             "Esta operação usará o menu interativo do sistema."
         )
         confirm = messagebox.askyesno("Confirmar Operação", confirm_message)
