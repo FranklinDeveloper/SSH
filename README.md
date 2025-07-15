@@ -1,7 +1,5 @@
 # SSH_Avancado_Cobol
 
-readme_content = """# SSH_Avancado_Cobol
-
 Ferramenta com interface gráfica para administração remota de sistemas Cobol via SSH.
 
 ## Histórico de Versões
