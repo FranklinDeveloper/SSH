@@ -1236,7 +1236,7 @@ class SSHClientGUI:
             text="Gerar Executável",
             command=self.generate_executável,
             style='Green.TButton',
-            width=14
+            width=15
         )
         self.generate_exe_btn.pack(side=tk.LEFT, padx=5)
         
